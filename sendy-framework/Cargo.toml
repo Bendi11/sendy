@@ -7,7 +7,7 @@ edition = "2021"
 rsa = { version = "0.9", features = ["sha2"] }
 zeroize = "1.6.0"
 
-tokio = { version = "1.29", features = ["net", "macros", "rt", "time"] }
+tokio = { version = "1.29", features = ["net", "macros", "rt", "time", "sync"] }
 
 bytemuck = { version = "1.13", features = ["derive"] }
 byteorder = "1.4"

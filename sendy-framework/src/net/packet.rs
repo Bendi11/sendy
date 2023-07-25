@@ -10,6 +10,8 @@ pub enum PacketKind {
     Ack = 1,
 
     Test = 2,
+    /// Transfer bytes to a queued buffer
+    Transfer = 3,
 }
 
 #[derive(Clone, Copy, Debug)]
