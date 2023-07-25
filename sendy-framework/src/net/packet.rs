@@ -29,6 +29,15 @@ pub struct Packet<P: PacketPayload> {
     pub payload: P,
 }
 
+impl Packet<()> {
+    pub const fn new(header: PacketHeader) -> Self {
+        Self {
+            header,
+            payload: (),
+        }
+    }
+}
+
 /// Trait to be implemented by all possible payloads for each type of packet available in the Sendy
 /// protocol
 pub trait PacketPayload: Sized {

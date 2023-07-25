@@ -2,27 +2,28 @@ use std::{io::{Cursor, Read}, num::NonZeroU8};
 
 use tokio::{net::UdpSocket, sync::Mutex};
 
-use super::packet::{PacketHeader, PacketPayload, PacketKind, PacketHeaderParseError};
+use super::packet::{PacketHeader, PacketPayload, PacketKind, PacketHeaderParseError, Packet};
 
 
 const MAX_IN_TRANSIT_MSG: usize = 5;
 const MAX_PACKET_SZ: usize = 500;
+const HEADER_SZ: usize = 6;
+const BLOCK_SIZE: usize = MAX_PACKET_SZ - HEADER_SZ;
 const INVALID_MSG_ID: u8 = 0;
 
 /// Minimal reliability layer over a UDP connection
 #[derive(Debug)]
 struct ReliableSocket {
     sock: UdpSocket,
-    recv: Mutex<MessageQueue>,
-    tx: Mutex<MessageQueue>,
+    recv: Mutex<[RecvMessage ; MAX_IN_TRANSIT_MSG]>,
 }
 
 #[derive(Debug)]
-struct MessageQueue {
-    pub msg_data: [Vec<u8> ; MAX_IN_TRANSIT_MSG],
-    pub msg_block_counts: [u32 ; MAX_IN_TRANSIT_MSG],
-    pub msg_kinds: [PacketKind ; MAX_IN_TRANSIT_MSG],
-    pub msg_ids: [Option<NonZeroU8> ; MAX_IN_TRANSIT_MSG],
+struct RecvMessage {
+    pub id: Option<NonZeroU8>,
+    pub data: Vec<u8>,
+    pub last_block: u32,
+    pub kind: PacketKind,
 }
 
 impl ReliableSocket {
@@ -34,14 +35,18 @@ impl ReliableSocket {
             let header = PacketHeader::parse(&mut buf).unwrap();
 
             if header.kind.is_control() {
+                self.send(Packet::new(PacketHeader {
+                    kind: PacketKind::Conn,
+                    msgid: header.msgid,
+                    msgoff: 0,
+                })).await;
                 return Ok((header.kind, vec![]))
             }
 
             let mut recv = self.recv.lock().await;
             let msg_slot = if header.kind == PacketKind::Transfer {
-                recv.msg_ids
+                recv
                     .iter()
-                    .enumerate()
                     .filter_map(|(idx, id)| id.map(|id| (idx, id)))
                     .find_map(|(idx, id)| (id.get() == header.msgid).then_some(idx))
                     .ok_or_else(|| ReliableSocketRecvError::TransferMessageId(header.msgid))?
@@ -57,7 +62,7 @@ impl ReliableSocket {
                             .ok_or_else(|| ReliableSocketRecvError::InvalidMsgId)?;
 
                         recv.msg_ids[slot] = Some(new_id);
-                        recv.msg_data[slot].reserve(MAX_PACKET_SZ * header.msgoff as usize);
+                        recv.msg_data[slot].reserve(BLOCK_SIZE * header.msgoff as usize);
                         recv.msg_block_counts[slot] = header.msgoff;
                         recv.msg_kinds[slot] = header.kind;
 
@@ -76,6 +81,10 @@ impl ReliableSocket {
             }
         }
     }
+
+    pub async fn send<P: PacketPayload>(&self, packet: Packet<P>) -> Result<(), ReliableSocketSendError> {
+        
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -90,4 +99,9 @@ pub enum ReliableSocketRecvError {
     NoOpenSlot,
     #[error("New message packet received with invalid message ID {}", INVALID_MSG_ID)]
     InvalidMsgId,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ReliableSocketSendError {
+
 }
