@@ -4,10 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-crypto_box = { version = "0.9", features = ["chacha20"] } # X25519 shared secret generation with XSalsa20Poly1305 AEAD
-aead = "0.5"
+rsa = { version = "0.9", features = ["sha2"] }
 zeroize = "1.6.0"
 
 tokio = { version = "1.29", features = ["net", "macros", "rt", "time"] }
 
+bytemuck = { version = "1.13", features = ["derive"] }
+byteorder = "1.4"
 thiserror = "1.0"
+serde = "1.0"
+serde_repr = "0.1"
