@@ -17,7 +17,6 @@ pub(crate) struct ReliableSocketTx {
     addr: Arc<SocketAddr>,
 }
 
-
 impl ReliableSocketTx {
     pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Sender<AckNotification>, sock: Arc<UdpSocket>) -> Self {
         Self {
@@ -99,8 +98,17 @@ impl ReliableSocketTx {
 
         let ack = async {
             loop {
-                let notification = ack_chan.recv().await?;
+                let notification = match ack_chan.recv().await {
+                    Ok(n) => n,
+                    Err(RecvError::Lagged(skip)) => {
+                        log::warn!("Skipped {} ACK notifications in channel", skip);
+                        continue
+                    },
+                    Err(e) => return Err(e),
+                };
+                log::trace!("Ack {}.{}", notification.msgid, notification.blockid);
                 if notification.msgid == pkt.msgid && notification.blockid == pkt.blockid {
+                    log::trace!("Got ACK for {}.{}", pkt.msgid, pkt.blockid);
                     break
                 }
             }

@@ -1,6 +1,6 @@
 use std::{time::Duration, net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc};
 
-use tokio::{net::UdpSocket, sync::broadcast::{Sender, channel}};
+use tokio::{net::UdpSocket, sync::{broadcast::{Sender, channel}, mpsc::unbounded_channel}};
 
 use self::{tx::ReliableSocketTx, recv::{ReliableSocketRecvInternal, ReliableSocketRecv}};
 
@@ -34,15 +34,15 @@ impl ReliableSocket {
 
         let sock = Arc::new(sock);
 
-        let (ack_chan, _) = channel::<AckNotification>(MAX_IN_TRANSIT_MSG);
-        
+        let (ack_chan, _) = channel::<AckNotification>(MAX_IN_TRANSIT_MSG * 50);
+
         let this = Self {
             tx: ReliableSocketTx::new(addr.clone(), ack_chan.clone(), sock.clone()),
             rx: ReliableSocketRecv::new(addr.clone(), ack_chan, sock),
         };
 
         this.tx.send(ConnMessage).await?;
-        this.tx.send(TestMessage { buf: vec![100u8 ; 10_000] }).await?;
+        //this.tx.send(TestMessage { buf: vec![100u8 ; 10_000] }).await?;
 
         tokio::time::sleep(Duration::from_secs(10)).await;
 
