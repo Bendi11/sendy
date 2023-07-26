@@ -106,9 +106,7 @@ impl ReliableSocketTx {
                     },
                     Err(e) => return Err(e),
                 };
-                log::trace!("Ack {}.{}", notification.msgid, notification.blockid);
                 if notification.msgid == pkt.msgid && notification.blockid == pkt.blockid {
-                    log::trace!("Got ACK for {}.{}", pkt.msgid, pkt.blockid);
                     break
                 }
             }

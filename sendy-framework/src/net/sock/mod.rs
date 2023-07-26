@@ -42,7 +42,7 @@ impl ReliableSocket {
         };
 
         this.tx.send(ConnMessage).await?;
-        //this.tx.send(TestMessage { buf: vec![100u8 ; 10_000] }).await?;
+        this.tx.send(TestMessage { buf: vec![100u8 ; 10_000_000] }).await?;
 
         tokio::time::sleep(Duration::from_secs(10)).await;
 
