@@ -1,6 +1,7 @@
 use std::{time::Duration, net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc};
 
-use tokio::{net::UdpSocket, sync::{broadcast::{Sender, channel}, mpsc::unbounded_channel}};
+use hibitset::BitSet;
+use tokio::{net::UdpSocket, sync::{broadcast::{Sender, channel}, mpsc::unbounded_channel, RwLock, Notify}};
 
 use self::{tx::ReliableSocketTx, recv::{ReliableSocketRecvInternal, ReliableSocketRecv}};
 
@@ -33,12 +34,13 @@ impl ReliableSocket {
         let sock = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, other.port())).await?;
 
         let sock = Arc::new(sock);
-
-        let (ack_chan, _) = channel::<AckNotification>(MAX_IN_TRANSIT_MSG * 50);
+        
+        let bits = Arc::new(RwLock::new(BitSet::new()));
+        let waker = Arc::new(Notify::new());
 
         let this = Self {
-            tx: ReliableSocketTx::new(addr.clone(), ack_chan.clone(), sock.clone()),
-            rx: ReliableSocketRecv::new(addr.clone(), ack_chan, sock),
+            tx: ReliableSocketTx::new(addr.clone(), bits.clone(), waker.clone(), sock.clone()),
+            rx: ReliableSocketRecv::new(addr.clone(), bits, waker, sock),
         };
 
         this.tx.send(ConnMessage).await?;

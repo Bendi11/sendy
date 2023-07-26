@@ -1,7 +1,7 @@
 use std::{num::NonZeroU8, collections::VecDeque, sync::Arc, cmp::Ordering, net::{SocketAddr, Ipv4Addr, SocketAddrV4}};
 
 use hibitset::{BitSet, BitSetLike};
-use tokio::{net::UdpSocket, sync::{Mutex, broadcast::Sender}, task::JoinHandle};
+use tokio::{net::UdpSocket, sync::{Mutex, broadcast::Sender, RwLock, Notify}, task::JoinHandle};
 
 use crate::net::packet::FromBytes;
 
@@ -20,7 +20,8 @@ impl Drop for ReliableSocketRecv {
 
 #[derive(Debug)]
 pub(crate) struct ReliableSocketRecvInternal {
-    ack_chan: Sender<AckNotification>,
+    ack_chan: Arc<RwLock<BitSet>>,
+    ack_wake: Arc<Notify>,
     sock: Arc<UdpSocket>,
     recv: Mutex<[RecvMessage ; MAX_IN_TRANSIT_MSG]>,
     msg: Mutex<VecDeque<(PacketKind, Option<Vec<u8>>)>>,
@@ -49,8 +50,8 @@ impl Default for RecvMessage {
 }
 
 impl ReliableSocketRecv {
-    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Sender<AckNotification>, sock: Arc<UdpSocket>) -> Self {
-        let internal = ReliableSocketRecvInternal::new(addr, ack_chan, sock);
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<RwLock<BitSet>>, ack_wake: Arc<Notify>, sock: Arc<UdpSocket>) -> Self {
+        let internal = ReliableSocketRecvInternal::new(addr, ack_chan, ack_wake, sock);
         let handle = tokio::task::spawn(internal.recv());
         Self {
             handle,
@@ -59,9 +60,10 @@ impl ReliableSocketRecv {
 }
 
 impl ReliableSocketRecvInternal {
-    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Sender<AckNotification>, sock: Arc<UdpSocket>) -> Self {
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<RwLock<BitSet>>, ack_wake: Arc<Notify>, sock: Arc<UdpSocket>) -> Self {
         Self {
             ack_chan,
+            ack_wake,
             sock,
             recv: Mutex::new(std::array::from_fn(|_| Default::default())),
             msg: Mutex::new(VecDeque::new()),
@@ -88,13 +90,8 @@ impl ReliableSocketRecvInternal {
             log::trace!("RECV {:?} {}.{}", header.kind, header.msgid, header.blockid);
             if header.kind.is_control() {
                 if header.kind == PacketKind::Ack {
-                    if let Err(e) = self.ack_chan.send(AckNotification {
-                        msgid: header.msgid,
-                        blockid: header.blockid,
-                    }) {
-                        log::error!("{}: Failed to send ACK notification on tx channel: {}", self.addr, e);
-                        continue
-                    }
+                    self.ack_chan.write().await.add(((header.msgid as u32) << 24) | header.blockid);
+                    self.ack_wake.notify_waiters();
                     continue
                 } else {
                     self.sendack(header.msgid, header.blockid).await?;

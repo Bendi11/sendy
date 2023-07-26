@@ -1,7 +1,8 @@
 use std::{sync::{Arc, atomic::{AtomicU8, Ordering}}, io::ErrorKind, net::SocketAddr};
 
 use futures::stream::FuturesUnordered;
-use tokio::{sync::{broadcast::{Sender, error::RecvError}, Semaphore}, net::UdpSocket};
+use hibitset::BitSet;
+use tokio::{sync::{broadcast::{Sender, error::RecvError}, Semaphore, Notify, RwLock}, net::UdpSocket};
 
 use crate::net::packet::{Message, ToBytes, PacketHeader, PacketKind};
 
@@ -9,7 +10,8 @@ use super::{AckNotification, BLOCK_SIZE, WAIT_FOR_ACK, MAX_IN_TRANSIT_MSG};
 
 
 pub(crate) struct ReliableSocketTx {
-    ack_chan: Sender<AckNotification>,
+    ack_chan: Arc<RwLock<BitSet>>,
+    ack_wake: Arc<Notify>,
     sock: Arc<UdpSocket>,
     id: AtomicU8,
     //With MAX_IN_TRANSIT_MSG permits
@@ -18,9 +20,10 @@ pub(crate) struct ReliableSocketTx {
 }
 
 impl ReliableSocketTx {
-    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Sender<AckNotification>, sock: Arc<UdpSocket>) -> Self {
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<RwLock<BitSet>>, ack_wake: Arc<Notify>, sock: Arc<UdpSocket>) -> Self {
         Self {
             ack_chan,
+            ack_wake,
             sock,
             id: AtomicU8::new(0),
             sending_msgs: Semaphore::new(MAX_IN_TRANSIT_MSG),
@@ -94,19 +97,15 @@ impl ReliableSocketTx {
             Ok::<(), std::io::Error>(())
         };
 
-        let mut ack_chan = self.ack_chan.subscribe();
+        let ack_wake = self.ack_wake.clone();
 
         let ack = async {
+            let id = ((pkt.msgid as u32) << 24) | pkt.blockid;
             loop {
-                let notification = match ack_chan.recv().await {
-                    Ok(n) => n,
-                    Err(RecvError::Lagged(skip)) => {
-                        log::warn!("Skipped {} ACK notifications in channel", skip);
-                        continue
-                    },
-                    Err(e) => return Err(e),
-                };
-                if notification.msgid == pkt.msgid && notification.blockid == pkt.blockid {
+                ack_wake.notified().await;
+
+                if self.ack_chan.read().await.contains(id) {
+                    self.ack_chan.write().await.remove(id);
                     break
                 }
             }
