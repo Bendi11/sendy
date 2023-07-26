@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1.29", features = ["net", "macros", "rt", "time", "sync"] }
+tokio = { version = "1.29", features = ["net", "macros", "rt-multi-thread", "time", "sync"] }
 clap = { version = "4.3", features = ["derive"] }
 stderrlog = "0.5"
 log = "0.4"

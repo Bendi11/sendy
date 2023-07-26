@@ -91,7 +91,7 @@ impl ReliableSocketTx {
         body.write(&mut buf)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
 
-        block.acquire().await;
+        let permit = block.acquire().await;
 
         let resend = async {
             loop {

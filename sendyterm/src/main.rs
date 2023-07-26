@@ -13,7 +13,7 @@ pub struct Args {
 
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() {
     stderrlog::new().verbosity(log::LevelFilter::Trace).init().unwrap();
 
