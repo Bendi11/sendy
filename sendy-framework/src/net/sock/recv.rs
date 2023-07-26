@@ -66,9 +66,16 @@ impl ReliableSocketRecvInternal {
     pub(crate) async fn recv(self) -> Result<(), std::io::Error> {
         let mut buf = [0u8 ; MAX_PACKET_SZ];
         loop {
-            let received_bytes = self.sock.recv(&mut buf).await.unwrap();
-            let header = PacketHeader::parse(&buf[..]).unwrap();
-
+            let received_bytes = self.sock.recv(&mut buf).await?;
+            let header = match PacketHeader::parse(&buf[..]) {
+                Ok(header) => header,
+                Err(e) => {
+                    log::error!("Failed to parse packet header from {}: {}", self.addr, e);
+                    continue
+                }
+            };
+            
+            log::trace!("RECV {:?} {}.{}", header.kind, header.msgid, header.blockid);
             if header.kind.is_control() {
                 if header.kind == PacketKind::Ack {
                     if let Err(e) = self.ack_chan.send(AckNotification {

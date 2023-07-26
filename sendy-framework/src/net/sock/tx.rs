@@ -87,7 +87,7 @@ impl ReliableSocketTx {
 
         let resend = async {
             loop {
-                log::trace!("SENT");
+                log::trace!("SENT {:?} {}.{}", pkt.kind, pkt.msgid, pkt.blockid);
                 self.sock.send_to(&buf[..], &*self.addr).await?;
                 tokio::time::sleep(WAIT_FOR_ACK).await;
             }
