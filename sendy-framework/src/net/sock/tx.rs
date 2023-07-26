@@ -6,7 +6,7 @@ use tokio::{sync::{broadcast::{Sender, error::RecvError}, Semaphore, Notify, RwL
 
 use crate::net::packet::{Message, ToBytes, PacketHeader, PacketKind};
 
-use super::{AckNotification, BLOCK_SIZE, WAIT_FOR_ACK, MAX_IN_TRANSIT_MSG};
+use super::{AckNotification, BLOCK_SIZE, WAIT_FOR_ACK, MAX_IN_TRANSIT_MSG, MAX_IN_TRANSIT_BLOCK};
 
 
 pub(crate) struct ReliableSocketTx {
@@ -48,6 +48,8 @@ impl ReliableSocketTx {
 
         let mut chunks = buf.chunks(BLOCK_SIZE).enumerate();
         let (_, first) = chunks.next().unwrap_or((0, &[]));
+
+        let send_limit = Arc::new(Semaphore::new(MAX_IN_TRANSIT_BLOCK));
         
         self.send_wait_ack(
             PacketHeader {
@@ -55,7 +57,8 @@ impl ReliableSocketTx {
                 msgid,
                 blockid: block_count as u32,
             },
-            first
+            first,
+            send_limit.clone(),
         ).await?;
 
         let futures = chunks
@@ -66,7 +69,8 @@ impl ReliableSocketTx {
                         msgid,
                         blockid: blockid as u32,
                     },
-                    block
+                    block,
+                    send_limit.clone(),
                 )
             ))
             .collect::<FuturesUnordered<_>>();
@@ -79,13 +83,15 @@ impl ReliableSocketTx {
         Ok(())
     }
 
-    async fn send_wait_ack(&self, pkt: PacketHeader, body: impl ToBytes) -> Result<(), std::io::Error> {
+    async fn send_wait_ack(&self, pkt: PacketHeader, body: impl ToBytes, block: Arc<Semaphore>) -> Result<(), std::io::Error> {
         let mut buf = vec![];
         pkt.write(&mut buf)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
 
         body.write(&mut buf)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
+
+        block.acquire().await;
 
         let resend = async {
             loop {
