@@ -95,8 +95,6 @@ impl ReliableSocketRecvInternal {
                         log::error!("{}: Failed to send ACK notification on tx channel: {}", self.addr, e);
                         continue
                     }
-
-                    log::trace!("SENT Ack {}.{}", header.msgid, header.blockid);
                     continue
                 } else {
                     self.sendack(header.msgid, header.blockid).await?;
