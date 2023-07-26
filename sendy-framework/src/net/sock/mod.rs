@@ -1,4 +1,4 @@
-use std::{time::Duration, net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc};
+use std::{time::Duration, net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc, collections::HashSet};
 
 use hibitset::BitSet;
 use tokio::{net::UdpSocket, sync::{broadcast::{Sender, channel}, mpsc::unbounded_channel, RwLock, Notify}};
@@ -17,7 +17,7 @@ const BLOCK_SIZE: usize = MAX_PACKET_SZ - HEADER_SZ;
 const INVALID_MSG_ID: u8 = 0;
 const WAIT_FOR_ACK: Duration = Duration::from_millis(500);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct AckNotification {
     pub msgid: u8,
     pub blockid: u32,
@@ -35,7 +35,7 @@ impl ReliableSocket {
 
         let sock = Arc::new(sock);
         
-        let bits = Arc::new(RwLock::new(BitSet::new()));
+        let bits = Arc::new(RwLock::new(HashSet::new()));
         let waker = Arc::new(Notify::new());
 
         let this = Self {

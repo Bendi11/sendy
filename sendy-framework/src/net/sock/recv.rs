@@ -1,4 +1,4 @@
-use std::{num::NonZeroU8, collections::VecDeque, sync::Arc, cmp::Ordering, net::{SocketAddr, Ipv4Addr, SocketAddrV4}};
+use std::{num::NonZeroU8, collections::{VecDeque, HashSet}, sync::Arc, cmp::Ordering, net::{SocketAddr, Ipv4Addr, SocketAddrV4}};
 
 use hibitset::{BitSet, BitSetLike};
 use tokio::{net::UdpSocket, sync::{Mutex, broadcast::Sender, RwLock, Notify}, task::JoinHandle};
@@ -20,7 +20,7 @@ impl Drop for ReliableSocketRecv {
 
 #[derive(Debug)]
 pub(crate) struct ReliableSocketRecvInternal {
-    ack_chan: Arc<RwLock<BitSet>>,
+    ack_chan: Arc<RwLock<HashSet<AckNotification>>>,
     ack_wake: Arc<Notify>,
     sock: Arc<UdpSocket>,
     recv: Mutex<[RecvMessage ; MAX_IN_TRANSIT_MSG]>,
@@ -50,7 +50,7 @@ impl Default for RecvMessage {
 }
 
 impl ReliableSocketRecv {
-    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<RwLock<BitSet>>, ack_wake: Arc<Notify>, sock: Arc<UdpSocket>) -> Self {
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<RwLock<HashSet<AckNotification>>>, ack_wake: Arc<Notify>, sock: Arc<UdpSocket>) -> Self {
         let internal = ReliableSocketRecvInternal::new(addr, ack_chan, ack_wake, sock);
         let handle = tokio::task::spawn(internal.recv());
         Self {
@@ -60,7 +60,7 @@ impl ReliableSocketRecv {
 }
 
 impl ReliableSocketRecvInternal {
-    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<RwLock<BitSet>>, ack_wake: Arc<Notify>, sock: Arc<UdpSocket>) -> Self {
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<RwLock<HashSet<AckNotification>>>, ack_wake: Arc<Notify>, sock: Arc<UdpSocket>) -> Self {
         Self {
             ack_chan,
             ack_wake,
@@ -90,7 +90,10 @@ impl ReliableSocketRecvInternal {
             log::trace!("RECV {:?} {}.{}", header.kind, header.msgid, header.blockid);
             if header.kind.is_control() {
                 if header.kind == PacketKind::Ack {
-                    self.ack_chan.write().await.add(((header.msgid as u32) << 24) | header.blockid);
+                    self.ack_chan.write().await.insert(AckNotification {
+                        msgid: header.msgid,
+                        blockid: header.blockid,
+                    });
                     self.ack_wake.notify_waiters();
                     continue
                 } else {

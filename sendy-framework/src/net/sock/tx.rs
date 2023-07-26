@@ -1,4 +1,4 @@
-use std::{sync::{Arc, atomic::{AtomicU8, Ordering}}, io::ErrorKind, net::SocketAddr};
+use std::{sync::{Arc, atomic::{AtomicU8, Ordering}}, io::ErrorKind, net::SocketAddr, collections::HashSet};
 
 use futures::stream::FuturesUnordered;
 use hibitset::BitSet;
@@ -10,7 +10,7 @@ use super::{AckNotification, BLOCK_SIZE, WAIT_FOR_ACK, MAX_IN_TRANSIT_MSG};
 
 
 pub(crate) struct ReliableSocketTx {
-    ack_chan: Arc<RwLock<BitSet>>,
+    ack_chan: Arc<RwLock<HashSet<AckNotification>>>,
     ack_wake: Arc<Notify>,
     sock: Arc<UdpSocket>,
     id: AtomicU8,
@@ -20,7 +20,7 @@ pub(crate) struct ReliableSocketTx {
 }
 
 impl ReliableSocketTx {
-    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<RwLock<BitSet>>, ack_wake: Arc<Notify>, sock: Arc<UdpSocket>) -> Self {
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<RwLock<HashSet<AckNotification>>>, ack_wake: Arc<Notify>, sock: Arc<UdpSocket>) -> Self {
         Self {
             ack_chan,
             ack_wake,
@@ -100,12 +100,15 @@ impl ReliableSocketTx {
         let ack_wake = self.ack_wake.clone();
 
         let ack = async {
-            let id = ((pkt.msgid as u32) << 24) | pkt.blockid;
+            let id = AckNotification {
+                msgid: pkt.msgid,
+                blockid: pkt.blockid,
+            };
             loop {
                 ack_wake.notified().await;
 
-                if self.ack_chan.read().await.contains(id) {
-                    self.ack_chan.write().await.remove(id);
+                if self.ack_chan.read().await.contains(&id) {
+                    self.ack_chan.write().await.remove(&id);
                     break
                 }
             }
