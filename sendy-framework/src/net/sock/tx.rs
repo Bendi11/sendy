@@ -103,7 +103,7 @@ impl ReliableSocketTx {
         body.write(&mut buf)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
 
-        block.acquire().await;
+        let permit = block.acquire().await;
 
         let resend = async {
             loop {
@@ -116,7 +116,10 @@ impl ReliableSocketTx {
         };
 
         tokio::select!{
-            _ = ack.notified() => Ok(()),
+            _ = ack.notified() => {
+                drop(permit);
+                Ok(())
+            },
             Err(e) = resend => {
                 log::error!(
                     "Failed to send block {}.{}: {}",
