@@ -41,7 +41,7 @@ impl Packet<()> {
 /// Trait to be implemented by all possible payloads for each type of packet available in the Sendy
 /// protocol
 pub trait PacketPayload: Sized {
-    type Error;
+    type Error: std::error::Error + Send + Sync + 'static;
     
     /// Consume bytes from the given buffer to parse an instance of `Self`, returning the remaining
     /// portion of the buffer and the instance or an error

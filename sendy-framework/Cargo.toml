@@ -9,8 +9,11 @@ zeroize = "1.6.0"
 
 tokio = { version = "1.29", features = ["net", "macros", "rt", "time", "sync"] }
 
+log = "0.4"
+
 bytemuck = { version = "1.13", features = ["derive"] }
 byteorder = "1.4"
 thiserror = "1.0"
+hibitset = "0.6"
 serde = "1.0"
 serde_repr = "0.1"
