@@ -1,16 +1,15 @@
 use std::{
     cmp::Ordering,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::HashMap,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     num::NonZeroU8,
     sync::Arc,
 };
 
-use futures::stream::AbortHandle;
 use hibitset::{BitSet, BitSetLike};
 use tokio::{
     net::UdpSocket,
-    sync::{broadcast::Sender, Mutex, Notify, RwLock},
+    sync::{mpsc::Sender, Mutex, Notify, mpsc::Receiver},
     task::JoinHandle,
 };
 
@@ -21,9 +20,12 @@ use super::{
     AckNotification, BLOCK_SIZE, HEADER_SZ, MAX_IN_TRANSIT_MSG, MAX_PACKET_SZ,
 };
 
+const MSG_QUEUE_LEN: usize = 16;
+
 #[derive(Debug)]
 pub(crate) struct ReliableSocketRecv {
     handle: JoinHandle<Result<(), std::io::Error>>,
+    msg: Mutex<Receiver<(PacketKind, Vec<u8>)>>,
 }
 
 impl Drop for ReliableSocketRecv {
@@ -37,7 +39,7 @@ pub(crate) struct ReliableSocketRecvInternal {
     ack_chan: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>,
     sock: Arc<UdpSocket>,
     recv: Mutex<[RecvMessage; MAX_IN_TRANSIT_MSG]>,
-    msg: Mutex<VecDeque<(PacketKind, Option<Vec<u8>>)>>,
+    msg: Sender<(PacketKind, Vec<u8>)>,
     addr: Arc<SocketAddr>,
 }
 
@@ -68,10 +70,22 @@ impl ReliableSocketRecv {
         ack: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>,
         sock: Arc<UdpSocket>,
     ) -> Self {
-        let internal = Arc::new(ReliableSocketRecvInternal::new(addr, ack, sock));
+        let (tx, rx) = tokio::sync::mpsc::channel(MSG_QUEUE_LEN);
+
+        let internal = Arc::new(ReliableSocketRecvInternal::new(addr, ack, sock, tx));
         let handle = tokio::task::spawn(internal.recv());
 
-        Self { handle }
+        Self { handle, msg: rx.into() }
+    }
+
+    pub(crate) async fn recv(&self) -> (PacketKind, Vec<u8>) {
+        match self.msg.lock().await.recv().await {
+            Some(msg) => msg,
+            None => {
+                log::error!("Channel between recv and main thread closed");
+                panic!();
+            }
+        }
     }
 }
 
@@ -80,18 +94,21 @@ impl ReliableSocketRecvInternal {
         addr: Arc<SocketAddr>,
         ack: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>,
         sock: Arc<UdpSocket>,
+        msg: Sender<(PacketKind, Vec<u8>)>,
     ) -> Self {
         Self {
             ack_chan: ack,
             sock,
             recv: Mutex::new(std::array::from_fn(|_| Default::default())),
-            msg: Mutex::new(VecDeque::new()),
+            msg,
             addr,
         }
     }
 
-    async fn finishmsg(&self, kind: PacketKind, vec: Option<Vec<u8>>) {
-        self.msg.lock().await.push_back((kind, vec));
+    async fn finishmsg(&self, kind: PacketKind, vec: Vec<u8>) {
+        if let Err(e) = self.msg.send((kind, vec)).await {
+            log::error!("Failed to send received message to main thread: {}", e);
+        }
     }
 
     async fn handle_pkt(
@@ -122,7 +139,7 @@ impl ReliableSocketRecvInternal {
                 return Ok(());
             } else {
                 self.sendack(header.msgid, header.blockid).await?;
-                self.finishmsg(header.kind, None).await;
+                self.finishmsg(header.kind, Vec::new()).await;
                 return Ok(());
             }
         }
@@ -215,7 +232,7 @@ impl ReliableSocketRecvInternal {
         let recv_block_count = buffer.recvd_blocks.clone().iter().count();
         match recv_block_count.cmp(&(buffer.msg_len as usize)) {
             Ordering::Equal => {
-                self.finishmsg(buffer.kind, Some(std::mem::take(&mut buffer.data)))
+                self.finishmsg(buffer.kind, std::mem::take(&mut buffer.data))
                     .await;
                 buffer.id = None;
             }
@@ -260,6 +277,3 @@ impl ReliableSocketRecvInternal {
         Ok(())
     }
 }
-
-#[derive(Debug, thiserror::Error)]
-pub enum ReliableSocketSendError {}

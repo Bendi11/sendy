@@ -8,17 +8,13 @@ use std::{
     },
 };
 
-use futures::{
-    future::abortable,
-    stream::{AbortHandle, Aborted, FuturesUnordered},
-    Future,
-};
-use hibitset::BitSet;
+use futures::stream::FuturesUnordered;
+
+
 use tokio::{
     net::UdpSocket,
     sync::{
-        broadcast::{error::RecvError, Sender},
-        Mutex, Notify, RwLock, Semaphore,
+        Mutex, Notify, Semaphore,
     },
 };
 
@@ -147,7 +143,8 @@ impl ReliableSocketTx {
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
 
         let permit = block.acquire().await;
-
+        
+        #[allow(unreachable_code)]
         let resend = async {
             loop {
                 log::trace!("SENT {:?} {}.{}", pkt.kind, pkt.msgid, pkt.blockid);

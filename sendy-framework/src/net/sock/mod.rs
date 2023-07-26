@@ -1,26 +1,22 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     sync::Arc,
     time::Duration,
 };
 
-use hibitset::BitSet;
+
 use tokio::{
     net::UdpSocket,
-    sync::{
-        broadcast::{channel, Sender},
-        mpsc::unbounded_channel,
-        Mutex, Notify, RwLock,
-    },
+    sync::Mutex,
 };
 
 use self::{
-    recv::{ReliableSocketRecv, ReliableSocketRecvInternal},
+    recv::ReliableSocketRecv,
     tx::ReliableSocketTx,
 };
 
-use super::packet::{ConnMessage, TestMessage};
+use super::packet::{ConnMessage, Message, PacketKind};
 
 mod recv;
 mod tx;
@@ -59,14 +55,12 @@ impl ReliableSocket {
         };
 
         this.tx.send(ConnMessage).await?;
-        this.tx
-            .send(TestMessage {
-                buf: vec![100u8; 10_000_000],
-            })
-            .await?;
-
-        //tokio::time::sleep(Duration::from_secs(10)).await;
 
         Ok(this)
     }
+
+    #[inline(always)]
+    pub async fn send<M: Message>(&self, msg: M) -> Result<(), std::io::Error> { self.tx.send(msg).await }
+    #[inline(always)]
+    pub async fn recv(&self) -> (PacketKind, Vec<u8>) { self.rx.recv().await }
 }
