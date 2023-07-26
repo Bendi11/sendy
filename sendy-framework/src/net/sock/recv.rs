@@ -49,6 +49,7 @@ struct RecvMessage {
     pub data: Vec<u8>,
     pub recvd_blocks: BitSet,
     pub msg_len: u32,
+    pub recvd_bytes: u32,
     pub kind: PacketKind,
 }
 
@@ -59,6 +60,7 @@ impl Default for RecvMessage {
             data: vec![],
             recvd_blocks: BitSet::new(),
             msg_len: 0,
+            recvd_bytes: 0,
             kind: PacketKind::Ack,
         }
     }
@@ -105,8 +107,10 @@ impl ReliableSocketRecvInternal {
         }
     }
 
-    async fn finishmsg(&self, kind: PacketKind, vec: Vec<u8>) {
-        if let Err(e) = self.msg.send((kind, vec)).await {
+    async fn finishmsg(&self, msg: &mut RecvMessage) {
+        let mut vec = std::mem::take(&mut msg.data); 
+        vec.truncate(msg.recvd_bytes as usize);
+        if let Err(e) = self.msg.send((msg.kind, vec)).await {
             log::error!("Failed to send received message to main thread: {}", e);
         }
     }
@@ -139,13 +143,13 @@ impl ReliableSocketRecvInternal {
                 return Ok(());
             } else {
                 self.sendack(header.msgid, header.blockid).await?;
-                self.finishmsg(header.kind, Vec::new()).await;
+                //self.finishmsg(header.kind, Vec::new()).await;
                 return Ok(());
             }
         }
 
         let mut recv = self.recv.lock().await;
-        let (blockid, buffer) = match header.kind {
+        let (blockid, mut buffer) = match header.kind {
             //Transfer data to existing buffer
             PacketKind::Transfer => (
                 header.blockid,
@@ -203,6 +207,7 @@ impl ReliableSocketRecvInternal {
                 });
                 open_slot.kind = new_msg;
                 open_slot.msg_len = header.blockid;
+                open_slot.recvd_bytes = 0;
                 open_slot.data.clear();
                 open_slot
                     .data
@@ -222,6 +227,7 @@ impl ReliableSocketRecvInternal {
         let block_data_len = received_bytes - HEADER_SZ;
 
         if block_data_len > 0 {
+            buffer.recvd_bytes += block_data_len as u32;
             (&mut buffer.data[blockid as usize * BLOCK_SIZE..][..block_data_len])
                 .copy_from_slice(&buf[HEADER_SZ..received_bytes]);
             buffer.recvd_blocks.add(header.blockid);
@@ -232,16 +238,14 @@ impl ReliableSocketRecvInternal {
         let recv_block_count = buffer.recvd_blocks.clone().iter().count();
         match recv_block_count.cmp(&(buffer.msg_len as usize)) {
             Ordering::Equal => {
-                self.finishmsg(buffer.kind, std::mem::take(&mut buffer.data))
+                self.finishmsg(&mut buffer)
                     .await;
                 buffer.id = None;
             }
             Ordering::Greater => {
                 log::warn!(
                     "{}: Received {} blocks but expecting only {} - message dropped",
-                    self.sock
-                        .peer_addr()
-                        .unwrap_or(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))),
+                    self.addr, 
                     recv_block_count,
                     buffer.msg_len
                 );

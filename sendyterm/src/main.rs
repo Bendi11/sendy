@@ -22,7 +22,7 @@ async fn main() {
     let args = Args::parse();
 
     let sock = ReliableSocket::tunnel_connect(args.addr).await.unwrap();
-    sock.send(TestMessage { buf: format!("Hello to {}", args.addr) }).await.unwrap();
+    sock.send(TestMessage { buf: (0..10000).map(|idx| format!("{}\n", idx)).collect::<String>() } ).await.unwrap();
     let (_, msg) = sock.recv().await;
     println!("Received: {}", String::from_utf8_lossy(&msg));
 
