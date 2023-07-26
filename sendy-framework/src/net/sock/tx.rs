@@ -101,7 +101,6 @@ impl ReliableSocketTx {
             loop {
                 let notification = ack_chan.recv().await?;
                 if notification.msgid == pkt.msgid && notification.blockid == pkt.blockid {
-                    log::trace!("GOT ACK");
                     break
                 }
             }
@@ -112,7 +111,6 @@ impl ReliableSocketTx {
         tokio::select! {
             Err(e) = resend => Err(e),
             Ok(()) = ack => {
-                log::trace!("Got ACK for {}.{}", pkt.msgid, pkt.blockid);
                 Ok(())
             }
         }

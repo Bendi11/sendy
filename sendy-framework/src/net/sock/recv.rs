@@ -161,9 +161,12 @@ impl ReliableSocketRecvInternal {
             }
             
             let block_data_len = received_bytes - HEADER_SZ;
-            (&mut buffer.data[blockid as usize * BLOCK_SIZE..][..block_data_len])
-                .copy_from_slice(&buf[HEADER_SZ..received_bytes]);
-            buffer.recvd_blocks.add(header.blockid);
+
+            if block_data_len > 0 {
+                (&mut buffer.data[blockid as usize * BLOCK_SIZE..][..block_data_len])
+                    .copy_from_slice(&buf[HEADER_SZ..received_bytes]);
+                buffer.recvd_blocks.add(header.blockid);
+            }
 
             self.sendack(header.msgid, header.blockid).await?;
             
@@ -199,8 +202,8 @@ impl ReliableSocketRecvInternal {
 
     async fn sendraw<P: ToBytes>(&self, pl: &P) -> Result<(), std::io::Error> {
         let mut buf = Vec::new();
-        pl.write(&mut buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        self.sock.send(&buf).await?;
+        pl.write(&mut buf)?;
+        self.sock.send_to(&buf, &*self.addr).await?;
         Ok(())
     }
 }
