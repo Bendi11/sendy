@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+tokio = { version = "1.29", features = ["net", "macros", "rt", "time", "sync"] }
+
 sendy-framework = { path = "../sendy-framework" }

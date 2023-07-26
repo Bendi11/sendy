@@ -8,6 +8,7 @@ rsa = { version = "0.9", features = ["sha2"] }
 zeroize = "1.6.0"
 
 tokio = { version = "1.29", features = ["net", "macros", "rt", "time", "sync"] }
+bytes = "1.4"
 futures = "0.3"
 
 log = "0.4"

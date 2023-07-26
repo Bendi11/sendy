@@ -1,19 +1,24 @@
 use std::{num::NonZeroU8, collections::VecDeque, sync::Arc, cmp::Ordering, net::{SocketAddr, Ipv4Addr, SocketAddrV4}};
 
 use hibitset::{BitSet, BitSetLike};
-use tokio::{net::UdpSocket, sync::{Mutex, broadcast::Sender}};
+use tokio::{net::UdpSocket, sync::{Mutex, broadcast::Sender}, task::JoinHandle};
 
-use super::{super::packet::{PacketHeader, PacketPayload, PacketKind}, MAX_IN_TRANSIT_MSG, MAX_PACKET_SZ, HEADER_SZ, BLOCK_SIZE, AckNotification};
+use crate::net::packet::FromBytes;
+
+use super::{super::packet::{PacketHeader, ToBytes, PacketKind}, MAX_IN_TRANSIT_MSG, MAX_PACKET_SZ, HEADER_SZ, BLOCK_SIZE, AckNotification};
 
 #[derive(Debug)]
-struct ReliableSocketRecv {
+pub(crate) struct ReliableSocketRecv(JoinHandle<Result<(), std::io::Error>>);
+
+#[derive(Debug)]
+pub(crate) struct ReliableSocketRecvInternal {
     ack_chan: Sender<AckNotification>,
     sock: Arc<UdpSocket>,
     recv: Mutex<[RecvMessage ; MAX_IN_TRANSIT_MSG]>,
     msg: Mutex<VecDeque<(PacketKind, Option<Vec<u8>>)>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RecvMessage {
     pub id: Option<NonZeroU8>,
     pub data: Vec<u8>,
@@ -22,16 +27,46 @@ struct RecvMessage {
     pub kind: PacketKind,
 }
 
+impl Default for RecvMessage {
+    fn default() -> Self {
+        Self {
+            id: None,
+            data: vec![],
+            recvd_blocks: BitSet::new(),
+            msg_len: 0,
+            kind: PacketKind::Ack,
+        }
+    }
+}
+
 impl ReliableSocketRecv {
+    pub(crate) fn new(ack_chan: Sender<AckNotification>, sock: Arc<UdpSocket>) -> Self {
+        let internal = ReliableSocketRecvInternal::new(ack_chan, sock);
+        let join = tokio::task::spawn(internal.recv());
+        Self(join)
+    }
+}
+
+impl ReliableSocketRecvInternal {
+    pub(crate) fn new(ack_chan: Sender<AckNotification>, sock: Arc<UdpSocket>) -> Self {
+        Self {
+            ack_chan,
+            sock,
+            recv: Mutex::new(std::array::from_fn(|_| Default::default())),
+            msg: Mutex::new(VecDeque::new()),
+        }
+    }
+
     async fn finishmsg(&self, kind: PacketKind, vec: Option<Vec<u8>>) {
         self.msg.lock().await.push_back((kind, vec));
     }
 
-    pub(crate) async fn recv(&self) -> Result<(), std::io::Error> {
+    pub(crate) async fn recv(self) -> Result<(), std::io::Error> {
         let mut buf = [0u8 ; MAX_PACKET_SZ];
         let ip = self.sock.peer_addr().unwrap_or(
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
         );
+
         loop {
             let received_bytes = self.sock.recv(&mut buf).await.unwrap();
             let header = PacketHeader::parse(&buf[..]).unwrap();
@@ -42,7 +77,7 @@ impl ReliableSocketRecv {
                         msgid: header.msgid,
                         blockid: header.blockid,
                     }) {
-                        log::error!("{}: Failed to send ACK notification on tx channel", ip);
+                        log::error!("{}: Failed to send ACK notification on tx channel: {}", ip, e);
                         continue
                     }
                 } else {
@@ -152,7 +187,7 @@ impl ReliableSocketRecv {
         }).await
     }
 
-    async fn sendraw<P: PacketPayload>(&self, pl: &P) -> Result<(), std::io::Error> {
+    async fn sendraw<P: ToBytes>(&self, pl: &P) -> Result<(), std::io::Error> {
         let mut buf = Vec::new();
         pl.write(&mut buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         self.sock.send(&buf).await?;

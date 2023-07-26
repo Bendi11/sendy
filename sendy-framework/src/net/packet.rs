@@ -1,4 +1,4 @@
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read, Write, ErrorKind};
 
 use byteorder::{LittleEndian, ReadBytesExt, LE, WriteBytesExt};
 
@@ -15,7 +15,7 @@ pub enum PacketKind {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct PacketHeader {
+pub(crate) struct PacketHeader {
     pub kind: PacketKind,
     /// ID of the message, rolls over to 1 after passing 255
     pub msgid: u8,
@@ -23,67 +23,72 @@ pub struct PacketHeader {
     pub blockid: u32,
 }
 
-pub trait Packet: Sized + PacketPayload {
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AckMessage;
+
+impl Message for AckMessage {
+    const TAG: PacketKind = PacketKind::Ack;
+}
+impl ToBytes for AckMessage { fn write<W: Write>(&self, buf: W) -> Result<(), std::io::Error> { Ok(()) } }
+impl FromBytes for AckMessage { fn parse<R: Read>(buf: R) -> Result<Self, std::io::Error> { Ok(Self) } }
+
+pub trait Message: Sized + ToBytes + FromBytes {
     const TAG: PacketKind;
 }
 
 /// Trait to be implemented by all possible payloads for each type of packet available in the Sendy
 /// protocol
-pub trait PacketPayload: Sized {
-    type Error: std::error::Error + Send + Sync + 'static;
-    
-    /// Consume bytes from the given buffer to parse an instance of `Self`, returning the remaining
-    /// portion of the buffer and the instance or an error
-    fn parse<R: Read>(buf: R) -> Result<Self, Self::Error>;
-    
+pub trait ToBytes: Sized {
     /// Write the representation of this payload to a buffer of bytes
-    fn write<W: Write>(&self, buf: W) -> Result<(), Self::Error>;
+    fn write<W: Write>(&self, buf: W) -> Result<(), std::io::Error>;
+}
+
+pub trait FromBytes: Sized {
+    fn parse<R: Read>(buf: R) -> Result<Self, std::io::Error>;
 }
 
 
-impl PacketPayload for () {
-    type Error = std::convert::Infallible;
-
-    fn parse<R: Read>(_: R) -> Result<Self, Self::Error> { Ok(()) }
-    fn write<W: Write>(&self, _: W) -> Result<(), Self::Error> { Ok(()) }
+impl ToBytes for () {
+    fn write<W: Write>(&self, _: W) -> Result<(), std::io::Error> { Ok(()) }
 }
 
-impl PacketPayload for Vec<u8> {
-    type Error = std::io::Error;
-
-    fn parse<R: Read>(mut read: R) -> Result<Self, Self::Error> {
-        let mut this = Vec::new();
-        read.read_to_end(&mut this)?;
-        Ok(this)
+impl FromBytes for () {
+    fn parse<R: Read>(buf: R) -> Result<Self, std::io::Error> {
+        Ok(())
     }
-    
-    fn write<W: Write>(&self, mut buf: W) -> Result<(), Self::Error> {
+}
+
+impl ToBytes for &[u8] {
+    fn write<W: Write>(&self, mut buf: W) -> Result<(), std::io::Error> {
         buf.write_all(&self)
     }
 }
 
-impl PacketPayload for PacketHeader {
-    type Error = PacketHeaderParseError;
-
-    fn parse<R: Read>(mut buf: R) -> Result<Self, Self::Error> {
-        let kind = buf.read_u8()?;
-        let kind = PacketKind::try_from(kind)?;
-        let msgid = buf.read_u8()?;
-        let msgoff = buf.read_u32::<LE>()?;
-
-        Ok(Self {
-            kind,
-            msgid,
-            blockid: msgoff,
-        })
-    }
-
-    fn write<W: Write>(&self, mut buf: W) -> Result<(), Self::Error> {
+impl ToBytes for PacketHeader {
+    fn write<W: Write>(&self, mut buf: W) -> Result<(), std::io::Error> {
         buf.write_u8(self.kind as u8)?;
         buf.write_u8(self.msgid)?;
         buf.write_u32::<LE>(self.blockid)?;
 
         Ok(())
+    }
+}
+
+impl FromBytes for PacketHeader {
+    fn parse<R: Read>(mut buf: R) -> Result<Self, std::io::Error> {
+        let kind = buf.read_u8()?;
+        
+        let kind = PacketKind::try_from(kind)
+            .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
+
+        let msgid = buf.read_u8()?;
+        let blockid = buf.read_u32::<LE>()?;
+
+        Ok(Self {
+            kind,
+            msgid,
+            blockid,
+        })
     }
 }
 
