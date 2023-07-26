@@ -4,7 +4,7 @@ use tokio::{net::UdpSocket, sync::broadcast::{Sender, channel}};
 
 use self::{tx::ReliableSocketTx, recv::{ReliableSocketRecvInternal, ReliableSocketRecv}};
 
-use super::packet::AckMessage;
+use super::packet::{AckMessage, TestMessage};
 
 mod recv;
 mod tx;
@@ -42,7 +42,11 @@ impl ReliableSocket {
             rx: ReliableSocketRecv::new(addr.clone(), ack_chan, sock),
         };
 
-        this.tx.send(AckMessage).await?;
+        this.tx.send(TestMessage).await?;
+        this.tx.send(TestMessage).await?;
+        this.tx.send(TestMessage).await?;
+
+        tokio::time::sleep(Duration::from_secs(10)).await;
 
         Ok(this)
     }

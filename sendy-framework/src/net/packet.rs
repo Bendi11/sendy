@@ -23,14 +23,18 @@ pub(crate) struct PacketHeader {
     pub blockid: u32,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct AckMessage;
-
-impl Message for AckMessage {
-    const TAG: PacketKind = PacketKind::Ack;
+macro_rules! message {
+    ($name:ident $tag:ident) => {
+        #[derive(Clone, Copy, Debug)]
+        pub(crate) struct $name;
+        impl Message for $name { const TAG: PacketKind = PacketKind::$tag; }
+        impl ToBytes for $name { fn write<W: Write>(&self, buf: W) -> Result<(), std::io::Error> { Ok(()) } }
+        impl FromBytes for $name { fn parse<R: Read>(buf: R) -> Result<Self, std::io::Error> { Ok(Self) } }
+    };
 }
-impl ToBytes for AckMessage { fn write<W: Write>(&self, buf: W) -> Result<(), std::io::Error> { Ok(()) } }
-impl FromBytes for AckMessage { fn parse<R: Read>(buf: R) -> Result<Self, std::io::Error> { Ok(Self) } }
+
+message!{AckMessage Ack}
+message!{TestMessage Test}
 
 pub trait Message: Sized + ToBytes + FromBytes {
     const TAG: PacketKind;
