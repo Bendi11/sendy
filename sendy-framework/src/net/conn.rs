@@ -1,6 +1,5 @@
 use std::{
-    net::{Ipv4Addr, SocketAddrV4},
-    time::Duration,
+    net::{SocketAddrV4},
 };
 
 use tokio::net::UdpSocket;
@@ -14,7 +13,7 @@ pub struct Session {
 
 impl Session {
     pub async fn udp_tunnel(
-        ctx: &Context,
+        _ctx: &Context,
         node: SocketAddrV4,
     ) -> Result<Self, SessionConnectError> {
         let sock = UdpSocket::bind(node).await?;

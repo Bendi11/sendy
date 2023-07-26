@@ -1,7 +1,7 @@
-use std::net::SocketAddrV4;
+use std::{net::SocketAddrV4, time::Duration};
 
 use clap::Parser;
-use sendy_framework::net::sock::ReliableSocket;
+use sendy_framework::net::{sock::ReliableSocket, packet::TestMessage};
 
 /// Test UDP connection on local network
 #[derive(Parser, Debug)]
@@ -15,11 +15,16 @@ pub struct Args {
 #[tokio::main]
 async fn main() {
     stderrlog::new()
-        .verbosity(log::LevelFilter::Warn)
+        .verbosity(log::LevelFilter::Trace)
         .init()
         .unwrap();
 
     let args = Args::parse();
 
-    ReliableSocket::tunnel_connect(args.addr).await.unwrap();
+    let sock = ReliableSocket::tunnel_connect(args.addr).await.unwrap();
+    sock.send(TestMessage { buf: format!("Hello to {}", args.addr) }).await.unwrap();
+    let (_, msg) = sock.recv().await;
+    println!("Received: {}", String::from_utf8_lossy(&msg));
+
+    tokio::time::sleep(Duration::from_secs(5)).await;
 }

@@ -1,6 +1,6 @@
-use std::io::{Cursor, ErrorKind, Read, Write};
+use std::io::{ErrorKind, Read, Write};
 
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt, LE};
+use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,12 +30,12 @@ macro_rules! message {
             const TAG: PacketKind = PacketKind::$tag;
         }
         impl ToBytes for $name {
-            fn write<W: Write>(&self, buf: W) -> Result<(), std::io::Error> {
+            fn write<W: Write>(&self, _buf: W) -> Result<(), std::io::Error> {
                 Ok(())
             }
         }
         impl FromBytes for $name {
-            fn parse<R: Read>(buf: R) -> Result<Self, std::io::Error> {
+            fn parse<R: Read>(_buf: R) -> Result<Self, std::io::Error> {
                 Ok(Self)
             }
         }
@@ -45,8 +45,8 @@ macro_rules! message {
 message! {AckMessage Ack}
 message! {ConnMessage Conn}
 
-pub(crate) struct TestMessage {
-    pub buf: Vec<u8>,
+pub struct TestMessage {
+    pub buf: String,
 }
 
 impl Message for TestMessage {
@@ -55,7 +55,7 @@ impl Message for TestMessage {
 
 impl ToBytes for TestMessage {
     fn write<W: Write>(&self, mut buf: W) -> Result<(), std::io::Error> {
-        buf.write_all(&self.buf)?;
+        buf.write_all(self.buf.as_bytes())?;
         Ok(())
     }
 }
@@ -64,7 +64,7 @@ impl FromBytes for TestMessage {
     fn parse<R: Read>(mut rbuf: R) -> Result<Self, std::io::Error> {
         let mut buf = vec![];
         rbuf.read_to_end(&mut buf)?;
-        Ok(Self { buf })
+        Ok(Self { buf: String::from_utf8_lossy(&buf).into_owned() })
     }
 }
 
@@ -90,7 +90,7 @@ impl ToBytes for () {
 }
 
 impl FromBytes for () {
-    fn parse<R: Read>(buf: R) -> Result<Self, std::io::Error> {
+    fn parse<R: Read>(_buf: R) -> Result<Self, std::io::Error> {
         Ok(())
     }
 }
