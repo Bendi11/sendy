@@ -101,6 +101,7 @@ impl ReliableSocketTx {
             loop {
                 let notification = ack_chan.recv().await?;
                 if notification.msgid == pkt.msgid && notification.blockid == pkt.blockid {
+                    log::trace!("GOT ACK");
                     break
                 }
             }

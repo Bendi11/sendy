@@ -43,8 +43,6 @@ impl ReliableSocket {
         };
 
         this.tx.send(TestMessage).await?;
-        this.tx.send(TestMessage).await?;
-        this.tx.send(TestMessage).await?;
 
         tokio::time::sleep(Duration::from_secs(10)).await;
 

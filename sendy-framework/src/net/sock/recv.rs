@@ -67,7 +67,6 @@ impl ReliableSocketRecvInternal {
         let mut buf = [0u8 ; MAX_PACKET_SZ];
         loop {
             let received_bytes = self.sock.recv(&mut buf).await.unwrap();
-            log::trace!("RECV");
             let header = PacketHeader::parse(&buf[..]).unwrap();
 
             if header.kind.is_control() {
@@ -79,9 +78,11 @@ impl ReliableSocketRecvInternal {
                         log::error!("{}: Failed to send ACK notification on tx channel: {}", self.addr, e);
                         continue
                     }
+
+                    log::trace!("ACK {}.{}", header.msgid, header.blockid);
                     continue
                 } else {
-                    self.sendack(header.msgid, 0).await?;
+                    self.sendack(header.msgid, 1).await?;
                     self.finishmsg(header.kind, None).await;
                     continue
                 }
@@ -148,7 +149,7 @@ impl ReliableSocketRecvInternal {
             
             //Already received packet
             if buffer.recvd_blocks.contains(blockid) {
-                self.sendack(header.msgid, blockid).await?;
+                self.sendack(header.msgid, header.blockid).await?;
                 continue
             }
             
@@ -157,7 +158,7 @@ impl ReliableSocketRecvInternal {
                 .copy_from_slice(&buf[HEADER_SZ..received_bytes]);
             buffer.recvd_blocks.add(header.blockid);
 
-            self.sendack(header.msgid, blockid).await?;
+            self.sendack(header.msgid, header.blockid).await?;
             
             let recv_block_count = buffer.recvd_blocks.clone().iter().count();
             match recv_block_count.cmp(&(buffer.msg_len as usize)) {
