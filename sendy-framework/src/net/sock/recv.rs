@@ -1,7 +1,8 @@
-use std::{num::NonZeroU8, collections::{VecDeque, HashSet}, sync::Arc, cmp::Ordering, net::{SocketAddr, Ipv4Addr, SocketAddrV4}};
+use std::{num::NonZeroU8, collections::{VecDeque, HashSet, HashMap}, sync::Arc, cmp::Ordering, net::{SocketAddr, Ipv4Addr, SocketAddrV4}};
 
+use futures::stream::AbortHandle;
 use hibitset::{BitSet, BitSetLike};
-use tokio::{net::UdpSocket, sync::{Mutex, RwLock, Notify}, task::JoinHandle};
+use tokio::{net::UdpSocket, sync::{Mutex, RwLock, Notify, broadcast::Sender}, task::{JoinHandle}};
 
 use crate::net::packet::FromBytes;
 
@@ -20,8 +21,7 @@ impl Drop for ReliableSocketRecv {
 
 #[derive(Debug)]
 pub(crate) struct ReliableSocketRecvInternal {
-    ack_chan: Arc<RwLock<HashSet<AckNotification>>>,
-    ack_wake: Arc<Notify>,
+    ack_chan: Arc<Mutex<HashMap<AckNotification, AbortHandle>>>,
     sock: Arc<UdpSocket>,
     recv: Mutex<[RecvMessage ; MAX_IN_TRANSIT_MSG]>,
     msg: Mutex<VecDeque<(PacketKind, Option<Vec<u8>>)>>,
@@ -50,8 +50,8 @@ impl Default for RecvMessage {
 }
 
 impl ReliableSocketRecv {
-    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<RwLock<HashSet<AckNotification>>>, ack_wake: Arc<Notify>, sock: Arc<UdpSocket>) -> Self {
-        let internal = ReliableSocketRecvInternal::new(addr, ack_chan, ack_wake, sock);
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack: Arc<Mutex<HashMap<AckNotification, AbortHandle>>>, sock: Arc<UdpSocket>) -> Self {
+        let internal = ReliableSocketRecvInternal::new(addr, ack, sock);
         let handle = tokio::task::spawn(internal.recv());
         Self {
             handle,
@@ -60,10 +60,9 @@ impl ReliableSocketRecv {
 }
 
 impl ReliableSocketRecvInternal {
-    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<RwLock<HashSet<AckNotification>>>, ack_wake: Arc<Notify>, sock: Arc<UdpSocket>) -> Self {
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack: Arc<Mutex<HashMap<AckNotification, AbortHandle>>>, sock: Arc<UdpSocket>) -> Self {
         Self {
-            ack_chan,
-            ack_wake,
+            ack_chan: ack,
             sock,
             recv: Mutex::new(std::array::from_fn(|_| Default::default())),
             msg: Mutex::new(VecDeque::new()),
@@ -90,11 +89,12 @@ impl ReliableSocketRecvInternal {
             log::trace!("RECV {:?} {}.{}", header.kind, header.msgid, header.blockid);
             if header.kind.is_control() {
                 if header.kind == PacketKind::Ack {
-                    self.ack_chan.write().await.insert(AckNotification {
-                        msgid: header.msgid,
-                        blockid: header.blockid,
-                    });
-                    self.ack_wake.notify_waiters();
+                    let mut ack = self.ack_chan.lock().await;
+                    let id = AckNotification { msgid: header.msgid, blockid: header.blockid };
+                    if let Some(not) = ack.get(&id) {
+                        not.abort();
+                        ack.remove(&id);
+                    }
                     continue
                 } else {
                     self.sendack(header.msgid, header.blockid).await?;

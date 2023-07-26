@@ -1,7 +1,7 @@
-use std::{time::Duration, net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc, collections::HashSet};
+use std::{time::Duration, net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc, collections::{HashSet, HashMap}};
 
 use hibitset::BitSet;
-use tokio::{net::UdpSocket, sync::{broadcast::{Sender, channel}, mpsc::unbounded_channel, RwLock, Notify}};
+use tokio::{net::UdpSocket, sync::{broadcast::{Sender, channel}, mpsc::unbounded_channel, RwLock, Notify, Mutex}};
 
 use self::{tx::ReliableSocketTx, recv::{ReliableSocketRecvInternal, ReliableSocketRecv}};
 
@@ -11,7 +11,7 @@ mod recv;
 mod tx;
 
 const MAX_IN_TRANSIT_MSG: usize = 5;
-const MAX_IN_TRANSIT_BLOCK: usize = 10000;
+const MAX_IN_TRANSIT_BLOCK: usize = 255;
 const MAX_PACKET_SZ: usize = 500;
 const HEADER_SZ: usize = 6;
 const BLOCK_SIZE: usize = MAX_PACKET_SZ - HEADER_SZ;
@@ -36,12 +36,11 @@ impl ReliableSocket {
 
         let sock = Arc::new(sock);
         
-        let bits = Arc::new(RwLock::new(HashSet::new()));
-        let waker = Arc::new(Notify::new());
+        let ack = Arc::new(Mutex::new(HashMap::new()));
 
         let this = Self {
-            tx: ReliableSocketTx::new(addr.clone(), bits.clone(), waker.clone(), sock.clone()),
-            rx: ReliableSocketRecv::new(addr.clone(), bits, waker, sock),
+            tx: ReliableSocketTx::new(addr.clone(), ack.clone(), sock.clone()),
+            rx: ReliableSocketRecv::new(addr.clone(), ack, sock),
         };
 
         this.tx.send(ConnMessage).await?;
