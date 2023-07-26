@@ -42,8 +42,11 @@ impl ReliableSocketRecv {
         self.msg.lock().await.push_back((kind, vec));
     }
 
-    pub async fn recv(&self) -> Result<(), ReliableSocketRecvError> {
+    pub async fn recv(&self) -> Result<(), std::io::Error> {
         let mut buf = [0u8 ; MAX_PACKET_SZ];
+        let ip = self.sock.peer_addr().unwrap_or(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
+        );
         loop {
             let received_bytes = self.sock.recv(&mut buf).await.unwrap();
             let header = PacketHeader::parse(&buf[..]).unwrap();
@@ -58,10 +61,19 @@ impl ReliableSocketRecv {
                 //Transfer data to existing buffer
                 PacketKind::Transfer => (
                     header.msgoff,
-                    recv
+                    match recv
                         .iter_mut()
-                        .find(|m| m.id.map(|id| id.get() == header.msgid).unwrap_or(false))
-                        .ok_or(ReliableSocketRecvError::TransferMessageId(header.msgid))?
+                        .find(|m| m.id.map(|id| id.get() == header.msgid).unwrap_or(false)) {
+                        Some(buf) => buf,
+                        None => {
+                            log::warn!(
+                                "{}: Transfer packet received for nonexistent message {}",
+                                ip,
+                                header.msgid,
+                            );
+                            continue
+                        }
+                    }
                 ),
                 //Beginning a new message
                 new_msg => {
@@ -71,12 +83,28 @@ impl ReliableSocketRecv {
                         continue
                     }
 
-                    let open_slot = recv
-                        .iter_mut()
-                        .find(|m| m.id.is_none())
-                        .ok_or(ReliableSocketRecvError::NoOpenSlot)?;
+                    let open_slot = match recv.iter_mut().find(|m| m.id.is_none()) {
+                        Some(slot) => slot,
+                        None => {
+                            log::error!(
+                                "{}: Received new message packet but have no open buffer spaces",
+                                ip
+                            );
+                            continue
+                        }
+                    };
 
-                    open_slot.id = Some(NonZeroU8::new(header.msgid).ok_or(ReliableSocketRecvError::InvalidMsgId)?);
+                    open_slot.id = Some(match NonZeroU8::new(header.msgid) {
+                        Some(id) => id,
+                        None => {
+                            log::error!(
+                                "{}: Received new message packet with invalid message id {}",
+                                ip,
+                                header.msgid,
+                            );
+                            continue
+                        }
+                    });
                     open_slot.kind = new_msg;
                     open_slot.msg_len = header.msgoff;
                     open_slot.data.extend(std::iter::repeat(0u8).take(header.msgoff as usize * BLOCK_SIZE));
@@ -102,16 +130,18 @@ impl ReliableSocketRecv {
             match recv_block_count.cmp(&(buffer.msg_len as usize)) {
                 Ordering::Equal => {
                     self.finishmsg(buffer.kind, Some(std::mem::take(&mut buffer.data))).await;
+                    buffer.id = None;
                 },
                 Ordering::Greater => {
                     log::warn!(
-                        "{}: Received {} blocks but expecting only {}",
+                        "{}: Received {} blocks but expecting only {} - message dropped",
                         self.sock.peer_addr().unwrap_or(
                             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
                         ),
                         recv_block_count,
                         buffer.msg_len
                     );
+                    buffer.id = None;
                 },
                 Ordering::Less => (),
             }
