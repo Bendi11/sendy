@@ -21,7 +21,7 @@ impl Drop for ReliableSocketRecv {
 
 #[derive(Debug)]
 pub(crate) struct ReliableSocketRecvInternal {
-    ack_chan: Arc<Mutex<HashMap<AckNotification, AbortHandle>>>,
+    ack_chan: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>,
     sock: Arc<UdpSocket>,
     recv: Mutex<[RecvMessage ; MAX_IN_TRANSIT_MSG]>,
     msg: Mutex<VecDeque<(PacketKind, Option<Vec<u8>>)>>,
@@ -50,7 +50,7 @@ impl Default for RecvMessage {
 }
 
 impl ReliableSocketRecv {
-    pub(crate) fn new(addr: Arc<SocketAddr>, ack: Arc<Mutex<HashMap<AckNotification, AbortHandle>>>, sock: Arc<UdpSocket>) -> Self {
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>, sock: Arc<UdpSocket>) -> Self {
         let internal = ReliableSocketRecvInternal::new(addr, ack, sock);
         let handle = tokio::task::spawn(internal.recv());
         Self {
@@ -60,7 +60,7 @@ impl ReliableSocketRecv {
 }
 
 impl ReliableSocketRecvInternal {
-    pub(crate) fn new(addr: Arc<SocketAddr>, ack: Arc<Mutex<HashMap<AckNotification, AbortHandle>>>, sock: Arc<UdpSocket>) -> Self {
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>, sock: Arc<UdpSocket>) -> Self {
         Self {
             ack_chan: ack,
             sock,
@@ -92,7 +92,7 @@ impl ReliableSocketRecvInternal {
                     let mut ack = self.ack_chan.lock().await;
                     let id = AckNotification { msgid: header.msgid, blockid: header.blockid };
                     if let Some(not) = ack.get(&id) {
-                        not.abort();
+                        not.notify_waiters();
                         ack.remove(&id);
                     }
                     continue

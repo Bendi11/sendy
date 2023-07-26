@@ -10,7 +10,7 @@ use super::{AckNotification, BLOCK_SIZE, WAIT_FOR_ACK, MAX_IN_TRANSIT_MSG, MAX_I
 
 
 pub(crate) struct ReliableSocketTx {
-    ack_chan: Arc<Mutex<HashMap<AckNotification, AbortHandle>>>,
+    ack_chan: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>,
     sock: Arc<UdpSocket>,
     id: AtomicU8,
     //With MAX_IN_TRANSIT_MSG permits
@@ -19,7 +19,7 @@ pub(crate) struct ReliableSocketTx {
 }
 
 impl ReliableSocketTx {
-    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<Mutex<HashMap<AckNotification, AbortHandle>>>, sock: Arc<UdpSocket>) -> Self {
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>, sock: Arc<UdpSocket>) -> Self {
         Self {
             ack_chan,
             sock,
@@ -52,7 +52,10 @@ impl ReliableSocketTx {
         let first_pkt = {
             let mut chan = self.ack_chan.lock().await;
 
-            let fut = self.send_wait_ack(
+            let not = Arc::new(Notify::new());
+            chan.insert(AckNotification { msgid, blockid: block_count as u32 }, not.clone());
+
+            self.send_wait_ack(
                 PacketHeader {
                     kind: M::TAG,
                     msgid,
@@ -60,22 +63,21 @@ impl ReliableSocketTx {
                 },
                 first,
                 send_limit.clone(),
-            );
-
-            let (fut, abort) = abortable(fut);
-
-            chan.insert(AckNotification { msgid, blockid: block_count as u32 }, abort);
-            fut
+                not
+            )
         };
 
-        let _ = first_pkt.await;
+        first_pkt.await?;
 
         let futures = {
             let mut chan = self.ack_chan.lock().await;
 
             chunks
                 .map(|(blockid, block)| {
-                    let fut = self.send_wait_ack(
+                    let notify_ack = Arc::new(Notify::new());
+                    chan.insert(AckNotification { msgid, blockid: blockid as u32 }, notify_ack.clone());
+
+                    Box::pin(self.send_wait_ack(
                         PacketHeader {
                             kind: PacketKind::Transfer,
                             msgid,
@@ -83,12 +85,8 @@ impl ReliableSocketTx {
                         },
                         block,
                         send_limit.clone(),
-                    );
-
-                    let (fut, abort) = abortable(fut);
-
-                    chan.insert(AckNotification { msgid, blockid: blockid as u32 }, abort);
-                    Box::pin(fut)
+                        notify_ack,
+                    ))
                 })
                 .collect::<FuturesUnordered<_>>()
         };
@@ -97,7 +95,7 @@ impl ReliableSocketTx {
         Ok(())
     }
 
-    async fn send_wait_ack(&self, pkt: PacketHeader, body: impl ToBytes, block: Arc<Semaphore>) -> Result<(), std::io::Error> {
+    async fn send_wait_ack(&self, pkt: PacketHeader, body: impl ToBytes, block: Arc<Semaphore>, ack: Arc<Notify>) -> Result<(), std::io::Error> {
         let mut buf = vec![];
         pkt.write(&mut buf)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
@@ -107,10 +105,28 @@ impl ReliableSocketTx {
 
         block.acquire().await;
 
-        loop {
-            log::trace!("SENT {:?} {}.{}", pkt.kind, pkt.msgid, pkt.blockid);
-            self.sock.send_to(&buf[..], &*self.addr).await?;
-            tokio::time::sleep(WAIT_FOR_ACK).await;
+        let resend = async {
+            loop {
+                log::trace!("SENT {:?} {}.{}", pkt.kind, pkt.msgid, pkt.blockid);
+                self.sock.send_to(&buf[..], &*self.addr).await?;
+                tokio::time::sleep(WAIT_FOR_ACK).await;
+            }
+
+            Result::<(), std::io::Error>::Ok(())
+        };
+
+        tokio::select!{
+            _ = ack.notified() => Ok(()),
+            Err(e) = resend => {
+                log::error!(
+                    "Failed to send block {}.{}: {}",
+                    pkt.msgid,
+                    pkt.blockid,
+                    e
+                );
+
+                Err(e)
+            }
         }
     }
 }
