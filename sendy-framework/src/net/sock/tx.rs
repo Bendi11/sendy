@@ -1,4 +1,4 @@
-use std::{sync::{Arc, atomic::{AtomicU8, Ordering}}, io::ErrorKind};
+use std::{sync::{Arc, atomic::{AtomicU8, Ordering}}, io::ErrorKind, net::SocketAddr};
 
 use futures::stream::FuturesUnordered;
 use tokio::{sync::{broadcast::{Sender, error::RecvError}, Semaphore}, net::UdpSocket};
@@ -14,16 +14,18 @@ pub(crate) struct ReliableSocketTx {
     id: AtomicU8,
     //With MAX_IN_TRANSIT_MSG permits
     sending_msgs: Semaphore,
+    addr: Arc<SocketAddr>,
 }
 
 
 impl ReliableSocketTx {
-    pub(crate) fn new(ack_chan: Sender<AckNotification>, sock: Arc<UdpSocket>) -> Self {
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Sender<AckNotification>, sock: Arc<UdpSocket>) -> Self {
         Self {
             ack_chan,
             sock,
             id: AtomicU8::new(0),
             sending_msgs: Semaphore::new(MAX_IN_TRANSIT_MSG),
+            addr,
         }
     }
 
@@ -85,7 +87,8 @@ impl ReliableSocketTx {
 
         let resend = async {
             loop {
-                self.sock.send(&buf[..]).await?;
+                log::trace!("SENT");
+                self.sock.send_to(&buf[..], &*self.addr).await?;
                 tokio::time::sleep(WAIT_FOR_ACK).await;
             }
 

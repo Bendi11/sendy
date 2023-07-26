@@ -2,7 +2,7 @@ use std::{time::Duration, net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc};
 
 use tokio::{net::UdpSocket, sync::broadcast::{Sender, channel}};
 
-use self::{tx::ReliableSocketTx, recv::ReliableSocketRecvInternal};
+use self::{tx::ReliableSocketTx, recv::{ReliableSocketRecvInternal, ReliableSocketRecv}};
 
 use super::packet::AckMessage;
 
@@ -25,21 +25,21 @@ pub(crate) struct AckNotification {
 
 pub struct ReliableSocket {
     tx: ReliableSocketTx,
-    rx: ReliableSocketRecvInternal,
+    rx: ReliableSocketRecv,
 }
 
 impl ReliableSocket {
     pub async fn tunnel_connect(other: SocketAddrV4) -> Result<Self, std::io::Error> {
+        let addr = Arc::new(SocketAddr::V4(other));
         let sock = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, other.port())).await?;
-        sock.connect(other).await?;
 
         let sock = Arc::new(sock);
 
         let (ack_chan, _) = channel::<AckNotification>(MAX_IN_TRANSIT_MSG);
         
         let this = Self {
-            tx: ReliableSocketTx::new(ack_chan.clone(), sock.clone()),
-            rx: ReliableSocketRecvInternal::new(ack_chan, sock),
+            tx: ReliableSocketTx::new(addr.clone(), ack_chan.clone(), sock.clone()),
+            rx: ReliableSocketRecv::new(addr.clone(), ack_chan, sock),
         };
 
         this.tx.send(AckMessage).await?;

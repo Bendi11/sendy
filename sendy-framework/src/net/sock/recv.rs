@@ -16,6 +16,7 @@ pub(crate) struct ReliableSocketRecvInternal {
     sock: Arc<UdpSocket>,
     recv: Mutex<[RecvMessage ; MAX_IN_TRANSIT_MSG]>,
     msg: Mutex<VecDeque<(PacketKind, Option<Vec<u8>>)>>,
+    addr: Arc<SocketAddr>,
 }
 
 #[derive(Debug, Clone)]
@@ -40,20 +41,21 @@ impl Default for RecvMessage {
 }
 
 impl ReliableSocketRecv {
-    pub(crate) fn new(ack_chan: Sender<AckNotification>, sock: Arc<UdpSocket>) -> Self {
-        let internal = ReliableSocketRecvInternal::new(ack_chan, sock);
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Sender<AckNotification>, sock: Arc<UdpSocket>) -> Self {
+        let internal = ReliableSocketRecvInternal::new(addr, ack_chan, sock);
         let join = tokio::task::spawn(internal.recv());
         Self(join)
     }
 }
 
 impl ReliableSocketRecvInternal {
-    pub(crate) fn new(ack_chan: Sender<AckNotification>, sock: Arc<UdpSocket>) -> Self {
+    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Sender<AckNotification>, sock: Arc<UdpSocket>) -> Self {
         Self {
             ack_chan,
             sock,
             recv: Mutex::new(std::array::from_fn(|_| Default::default())),
             msg: Mutex::new(VecDeque::new()),
+            addr,
         }
     }
 
@@ -63,12 +65,9 @@ impl ReliableSocketRecvInternal {
 
     pub(crate) async fn recv(self) -> Result<(), std::io::Error> {
         let mut buf = [0u8 ; MAX_PACKET_SZ];
-        let ip = self.sock.peer_addr().unwrap_or(
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
-        );
-
         loop {
             let received_bytes = self.sock.recv(&mut buf).await.unwrap();
+            log::trace!("RECV");
             let header = PacketHeader::parse(&buf[..]).unwrap();
 
             if header.kind.is_control() {
@@ -77,12 +76,14 @@ impl ReliableSocketRecvInternal {
                         msgid: header.msgid,
                         blockid: header.blockid,
                     }) {
-                        log::error!("{}: Failed to send ACK notification on tx channel: {}", ip, e);
+                        log::error!("{}: Failed to send ACK notification on tx channel: {}", self.addr, e);
                         continue
                     }
+                    continue
                 } else {
                     self.sendack(header.msgid, 0).await?;
                     self.finishmsg(header.kind, None).await;
+                    continue
                 }
             }
 
@@ -98,7 +99,7 @@ impl ReliableSocketRecvInternal {
                         None => {
                             log::warn!(
                                 "{}: Transfer packet received for nonexistent message {}",
-                                ip,
+                                self.addr,
                                 header.msgid,
                             );
                             continue
@@ -118,7 +119,7 @@ impl ReliableSocketRecvInternal {
                         None => {
                             log::error!(
                                 "{}: Received new message packet but have no open buffer spaces",
-                                ip
+                                self.addr
                             );
                             continue
                         }
@@ -129,7 +130,7 @@ impl ReliableSocketRecvInternal {
                         None => {
                             log::error!(
                                 "{}: Received new message packet with invalid message id {}",
-                                ip,
+                                self.addr,
                                 header.msgid,
                             );
                             continue
@@ -137,6 +138,7 @@ impl ReliableSocketRecvInternal {
                     });
                     open_slot.kind = new_msg;
                     open_slot.msg_len = header.blockid;
+                    open_slot.data.clear();
                     open_slot.data.extend(std::iter::repeat(0u8).take(header.blockid as usize * BLOCK_SIZE));
                     open_slot.recvd_blocks.clear();
                     

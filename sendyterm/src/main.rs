@@ -15,6 +15,8 @@ pub struct Args {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    stderrlog::new().verbosity(log::LevelFilter::Trace).init().unwrap();
+
     let args = Args::parse();
 
     ReliableSocket::tunnel_connect(args.addr).await.unwrap();
