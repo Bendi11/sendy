@@ -8,7 +8,15 @@ use crate::net::packet::FromBytes;
 use super::{super::packet::{PacketHeader, ToBytes, PacketKind}, MAX_IN_TRANSIT_MSG, MAX_PACKET_SZ, HEADER_SZ, BLOCK_SIZE, AckNotification};
 
 #[derive(Debug)]
-pub(crate) struct ReliableSocketRecv(JoinHandle<Result<(), std::io::Error>>);
+pub(crate) struct ReliableSocketRecv {
+    handle: JoinHandle<Result<(), std::io::Error>>,
+}
+
+impl Drop for ReliableSocketRecv {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct ReliableSocketRecvInternal {
@@ -43,8 +51,10 @@ impl Default for RecvMessage {
 impl ReliableSocketRecv {
     pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Sender<AckNotification>, sock: Arc<UdpSocket>) -> Self {
         let internal = ReliableSocketRecvInternal::new(addr, ack_chan, sock);
-        let join = tokio::task::spawn(internal.recv());
-        Self(join)
+        let handle = tokio::task::spawn(internal.recv());
+        Self {
+            handle,
+        }
     }
 }
 
@@ -86,10 +96,10 @@ impl ReliableSocketRecvInternal {
                         continue
                     }
 
-                    log::trace!("ACK {}.{}", header.msgid, header.blockid);
+                    log::trace!("SENT Ack {}.{}", header.msgid, header.blockid);
                     continue
                 } else {
-                    self.sendack(header.msgid, 1).await?;
+                    self.sendack(header.msgid, header.blockid).await?;
                     self.finishmsg(header.kind, None).await;
                     continue
                 }
@@ -118,7 +128,7 @@ impl ReliableSocketRecvInternal {
                 new_msg => {
                     // We already received the new message packet
                     if recv.iter().any(|m| m.id.map(|id| id.get() == header.msgid).unwrap_or(false)) {
-                        self.sendack(header.msgid, 0).await?;
+                        self.sendack(header.msgid, header.blockid).await?;
                         continue
                     }
 

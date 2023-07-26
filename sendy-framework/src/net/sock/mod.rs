@@ -4,7 +4,7 @@ use tokio::{net::UdpSocket, sync::broadcast::{Sender, channel}};
 
 use self::{tx::ReliableSocketTx, recv::{ReliableSocketRecvInternal, ReliableSocketRecv}};
 
-use super::packet::{AckMessage, TestMessage};
+use super::packet::ConnMessage;
 
 mod recv;
 mod tx;
@@ -21,7 +21,6 @@ pub(crate) struct AckNotification {
     pub msgid: u8,
     pub blockid: u32,
 }
-
 
 pub struct ReliableSocket {
     tx: ReliableSocketTx,
@@ -42,7 +41,7 @@ impl ReliableSocket {
             rx: ReliableSocketRecv::new(addr.clone(), ack_chan, sock),
         };
 
-        this.tx.send(TestMessage).await?;
+        this.tx.send(ConnMessage).await?;
 
         tokio::time::sleep(Duration::from_secs(10)).await;
 

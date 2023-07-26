@@ -35,6 +35,7 @@ macro_rules! message {
 
 message!{AckMessage Ack}
 message!{TestMessage Test}
+message!{ConnMessage Conn}
 
 pub trait Message: Sized + ToBytes + FromBytes {
     const TAG: PacketKind;
