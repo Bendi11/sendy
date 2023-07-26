@@ -43,7 +43,7 @@ impl ReliableSocketTx {
         let block_count = buf.len() / BLOCK_SIZE + if buf.len() % BLOCK_SIZE != 0 { 1 } else { 0 };
 
         let mut chunks = buf.chunks(BLOCK_SIZE).enumerate();
-        let (_, first) = chunks.next().unwrap();
+        let (_, first) = chunks.next().unwrap_or((0, &[]));
         
         self.send_wait_ack(
             PacketHeader {
