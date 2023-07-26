@@ -8,14 +8,16 @@ use sendy_framework::net::sock::ReliableSocket;
 #[command(author, version, about)]
 pub struct Args {
     /// IP address of the peer to attempt a connection to
-    #[arg(index=1)]
+    #[arg(index = 1)]
     addr: SocketAddrV4,
-
 }
 
 #[tokio::main]
 async fn main() {
-    stderrlog::new().verbosity(log::LevelFilter::Trace).init().unwrap();
+    stderrlog::new()
+        .verbosity(log::LevelFilter::Warn)
+        .init()
+        .unwrap();
 
     let args = Args::parse();
 

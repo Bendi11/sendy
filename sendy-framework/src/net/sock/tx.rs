@@ -1,13 +1,30 @@
-use std::{sync::{Arc, atomic::{AtomicU8, Ordering}}, io::ErrorKind, net::SocketAddr, collections::{HashSet, HashMap}};
+use std::{
+    collections::{HashMap, HashSet},
+    io::ErrorKind,
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc,
+    },
+};
 
-use futures::{stream::{FuturesUnordered, AbortHandle, Aborted}, future::abortable, Future};
+use futures::{
+    future::abortable,
+    stream::{AbortHandle, Aborted, FuturesUnordered},
+    Future,
+};
 use hibitset::BitSet;
-use tokio::{sync::{broadcast::{Sender, error::RecvError}, Semaphore, Notify, RwLock, Mutex}, net::UdpSocket};
+use tokio::{
+    net::UdpSocket,
+    sync::{
+        broadcast::{error::RecvError, Sender},
+        Mutex, Notify, RwLock, Semaphore,
+    },
+};
 
-use crate::net::packet::{Message, ToBytes, PacketHeader, PacketKind};
+use crate::net::packet::{Message, PacketHeader, PacketKind, ToBytes};
 
-use super::{AckNotification, BLOCK_SIZE, WAIT_FOR_ACK, MAX_IN_TRANSIT_MSG, MAX_IN_TRANSIT_BLOCK};
-
+use super::{AckNotification, BLOCK_SIZE, MAX_IN_TRANSIT_BLOCK, MAX_IN_TRANSIT_MSG, WAIT_FOR_ACK};
 
 pub(crate) struct ReliableSocketTx {
     ack_chan: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>,
@@ -19,7 +36,11 @@ pub(crate) struct ReliableSocketTx {
 }
 
 impl ReliableSocketTx {
-    pub(crate) fn new(addr: Arc<SocketAddr>, ack_chan: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>, sock: Arc<UdpSocket>) -> Self {
+    pub(crate) fn new(
+        addr: Arc<SocketAddr>,
+        ack_chan: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>,
+        sock: Arc<UdpSocket>,
+    ) -> Self {
         Self {
             ack_chan,
             sock,
@@ -36,7 +57,11 @@ impl ReliableSocketTx {
         }
 
         let msgid = self.id.fetch_add(1, Ordering::AcqRel);
-        let msgid = if msgid == 0 { self.id.fetch_add(1, Ordering::AcqRel) } else { msgid };
+        let msgid = if msgid == 0 {
+            self.id.fetch_add(1, Ordering::AcqRel)
+        } else {
+            msgid
+        };
 
         let mut buf = Vec::new();
         msg.write(&mut buf)
@@ -53,7 +78,13 @@ impl ReliableSocketTx {
             let mut chan = self.ack_chan.lock().await;
 
             let not = Arc::new(Notify::new());
-            chan.insert(AckNotification { msgid, blockid: block_count as u32 }, not.clone());
+            chan.insert(
+                AckNotification {
+                    msgid,
+                    blockid: block_count as u32,
+                },
+                not.clone(),
+            );
 
             self.send_wait_ack(
                 PacketHeader {
@@ -63,7 +94,7 @@ impl ReliableSocketTx {
                 },
                 first,
                 send_limit.clone(),
-                not
+                not,
             )
         };
 
@@ -75,7 +106,13 @@ impl ReliableSocketTx {
             chunks
                 .map(|(blockid, block)| {
                     let notify_ack = Arc::new(Notify::new());
-                    chan.insert(AckNotification { msgid, blockid: blockid as u32 }, notify_ack.clone());
+                    chan.insert(
+                        AckNotification {
+                            msgid,
+                            blockid: blockid as u32,
+                        },
+                        notify_ack.clone(),
+                    );
 
                     Box::pin(self.send_wait_ack(
                         PacketHeader {
@@ -90,12 +127,18 @@ impl ReliableSocketTx {
                 })
                 .collect::<FuturesUnordered<_>>()
         };
-        
+
         futures::future::join_all(futures).await;
         Ok(())
     }
 
-    async fn send_wait_ack(&self, pkt: PacketHeader, body: impl ToBytes, block: Arc<Semaphore>, ack: Arc<Notify>) -> Result<(), std::io::Error> {
+    async fn send_wait_ack(
+        &self,
+        pkt: PacketHeader,
+        body: impl ToBytes,
+        block: Arc<Semaphore>,
+        ack: Arc<Notify>,
+    ) -> Result<(), std::io::Error> {
         let mut buf = vec![];
         pkt.write(&mut buf)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
@@ -115,7 +158,7 @@ impl ReliableSocketTx {
             Result::<(), std::io::Error>::Ok(())
         };
 
-        tokio::select!{
+        tokio::select! {
             _ = ack.notified() => {
                 drop(permit);
                 Ok(())

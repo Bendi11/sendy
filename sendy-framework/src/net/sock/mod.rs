@@ -1,9 +1,24 @@
-use std::{time::Duration, net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc, collections::{HashSet, HashMap}};
+use std::{
+    collections::{HashMap, HashSet},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    sync::Arc,
+    time::Duration,
+};
 
 use hibitset::BitSet;
-use tokio::{net::UdpSocket, sync::{broadcast::{Sender, channel}, mpsc::unbounded_channel, RwLock, Notify, Mutex}};
+use tokio::{
+    net::UdpSocket,
+    sync::{
+        broadcast::{channel, Sender},
+        mpsc::unbounded_channel,
+        Mutex, Notify, RwLock,
+    },
+};
 
-use self::{tx::ReliableSocketTx, recv::{ReliableSocketRecvInternal, ReliableSocketRecv}};
+use self::{
+    recv::{ReliableSocketRecv, ReliableSocketRecvInternal},
+    tx::ReliableSocketTx,
+};
 
 use super::packet::{ConnMessage, TestMessage};
 
@@ -11,7 +26,7 @@ mod recv;
 mod tx;
 
 const MAX_IN_TRANSIT_MSG: usize = 5;
-const MAX_IN_TRANSIT_BLOCK: usize = 255;
+const MAX_IN_TRANSIT_BLOCK: usize = 5000;
 const MAX_PACKET_SZ: usize = 500;
 const HEADER_SZ: usize = 6;
 const BLOCK_SIZE: usize = MAX_PACKET_SZ - HEADER_SZ;
@@ -35,7 +50,7 @@ impl ReliableSocket {
         let sock = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, other.port())).await?;
 
         let sock = Arc::new(sock);
-        
+
         let ack = Arc::new(Mutex::new(HashMap::new()));
 
         let this = Self {
@@ -44,9 +59,13 @@ impl ReliableSocket {
         };
 
         this.tx.send(ConnMessage).await?;
-        this.tx.send(TestMessage { buf: vec![100u8 ; 10_000_000] }).await?;
+        this.tx
+            .send(TestMessage {
+                buf: vec![100u8; 10_000_000],
+            })
+            .await?;
 
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        //tokio::time::sleep(Duration::from_secs(10)).await;
 
         Ok(this)
     }

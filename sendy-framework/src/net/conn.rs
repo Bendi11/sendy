@@ -1,24 +1,26 @@
-use std::{net::{Ipv4Addr, SocketAddrV4}, time::Duration};
+use std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    time::Duration,
+};
 
 use tokio::net::UdpSocket;
 
 use crate::ctx::Context;
-
 
 /// Network connection with another client
 pub struct Session {
     sock: UdpSocket,
 }
 
-
 impl Session {
-    pub async fn udp_tunnel(ctx: &Context, node: SocketAddrV4) -> Result<Self, SessionConnectError> {
+    pub async fn udp_tunnel(
+        ctx: &Context,
+        node: SocketAddrV4,
+    ) -> Result<Self, SessionConnectError> {
         let sock = UdpSocket::bind(node).await?;
         sock.connect(node).await?;
 
-        Ok(Self {
-            sock,
-        })
+        Ok(Self { sock })
     }
 }
 

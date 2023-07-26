@@ -1,7 +1,6 @@
-use std::io::{Cursor, Read, Write, ErrorKind};
+use std::io::{Cursor, ErrorKind, Read, Write};
 
-use byteorder::{LittleEndian, ReadBytesExt, LE, WriteBytesExt};
-
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt, LE};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,14 +26,24 @@ macro_rules! message {
     ($name:ident $tag:ident) => {
         #[derive(Clone, Copy, Debug)]
         pub(crate) struct $name;
-        impl Message for $name { const TAG: PacketKind = PacketKind::$tag; }
-        impl ToBytes for $name { fn write<W: Write>(&self, buf: W) -> Result<(), std::io::Error> { Ok(()) } }
-        impl FromBytes for $name { fn parse<R: Read>(buf: R) -> Result<Self, std::io::Error> { Ok(Self) } }
+        impl Message for $name {
+            const TAG: PacketKind = PacketKind::$tag;
+        }
+        impl ToBytes for $name {
+            fn write<W: Write>(&self, buf: W) -> Result<(), std::io::Error> {
+                Ok(())
+            }
+        }
+        impl FromBytes for $name {
+            fn parse<R: Read>(buf: R) -> Result<Self, std::io::Error> {
+                Ok(Self)
+            }
+        }
     };
 }
 
-message!{AckMessage Ack}
-message!{ConnMessage Conn}
+message! {AckMessage Ack}
+message! {ConnMessage Conn}
 
 pub(crate) struct TestMessage {
     pub buf: Vec<u8>,
@@ -55,7 +64,7 @@ impl FromBytes for TestMessage {
     fn parse<R: Read>(mut rbuf: R) -> Result<Self, std::io::Error> {
         let mut buf = vec![];
         rbuf.read_to_end(&mut buf)?;
-        Ok(Self{buf})
+        Ok(Self { buf })
     }
 }
 
@@ -74,9 +83,10 @@ pub trait FromBytes: Sized {
     fn parse<R: Read>(buf: R) -> Result<Self, std::io::Error>;
 }
 
-
 impl ToBytes for () {
-    fn write<W: Write>(&self, _: W) -> Result<(), std::io::Error> { Ok(()) }
+    fn write<W: Write>(&self, _: W) -> Result<(), std::io::Error> {
+        Ok(())
+    }
 }
 
 impl FromBytes for () {
@@ -104,7 +114,7 @@ impl ToBytes for PacketHeader {
 impl FromBytes for PacketHeader {
     fn parse<R: Read>(mut buf: R) -> Result<Self, std::io::Error> {
         let kind = buf.read_u8()?;
-        
+
         let kind = PacketKind::try_from(kind)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
 
@@ -123,8 +133,7 @@ impl PacketKind {
     /// If the packet is a control packet that will not send more bytes
     pub const fn is_control(&self) -> bool {
         match self {
-            Self::Conn 
-            | Self::Ack => true,
+            Self::Conn | Self::Ack => true,
             _ => false,
         }
     }
@@ -139,9 +148,9 @@ impl TryFrom<u8> for PacketKind {
             1 => Self::Ack,
             2 => Self::Test,
             3 => Self::Transfer,
-            other => return Err(PacketKindParseErr(other))
+            other => return Err(PacketKindParseErr(other)),
         })
-    } 
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
