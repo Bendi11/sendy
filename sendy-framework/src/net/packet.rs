@@ -114,6 +114,8 @@ impl TryFrom<u8> for PacketKind {
         Ok(match value {
             0 => Self::Conn,
             1 => Self::Ack,
+            2 => Self::Test,
+            3 => Self::Transfer,
             other => return Err(PacketKindParseErr(other))
         })
     } 
