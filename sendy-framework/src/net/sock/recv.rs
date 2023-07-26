@@ -1,24 +1,9 @@
-use std::{io::{Cursor, Read}, num::NonZeroU8, collections::{HashSet, VecDeque}, sync::Arc, cmp::Ordering, net::{SocketAddr, IpAddr, Ipv4Addr, SocketAddrV4}};
+use std::{num::NonZeroU8, collections::VecDeque, sync::Arc, cmp::Ordering, net::{SocketAddr, Ipv4Addr, SocketAddrV4}};
 
 use hibitset::{BitSet, BitSetLike};
-use tokio::{net::UdpSocket, sync::{Mutex, mpsc::Sender}};
+use tokio::{net::UdpSocket, sync::{Mutex, broadcast::Sender}};
 
-use super::{super::packet::{PacketHeader, PacketPayload, PacketKind, PacketHeaderParseError, Packet}, MAX_IN_TRANSIT_MSG, MAX_PACKET_SZ, HEADER_SZ, BLOCK_SIZE, INVALID_MSG_ID};
-
-
-
-
-/// Minimal reliability layer over a UDP connection
-#[derive(Debug)]
-struct ReliableSocket {
-    sock: UdpSocket,
-    recv: Mutex<[RecvMessage ; MAX_IN_TRANSIT_MSG]>,
-}
-
-struct AckNotification {
-    pub msgid: u8,
-    pub blockid: u32,
-}
+use super::{super::packet::{PacketHeader, PacketPayload, PacketKind}, MAX_IN_TRANSIT_MSG, MAX_PACKET_SZ, HEADER_SZ, BLOCK_SIZE, AckNotification};
 
 #[derive(Debug)]
 struct ReliableSocketRecv {
@@ -42,7 +27,7 @@ impl ReliableSocketRecv {
         self.msg.lock().await.push_back((kind, vec));
     }
 
-    pub async fn recv(&self) -> Result<(), std::io::Error> {
+    pub(crate) async fn recv(&self) -> Result<(), std::io::Error> {
         let mut buf = [0u8 ; MAX_PACKET_SZ];
         let ip = self.sock.peer_addr().unwrap_or(
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
@@ -52,15 +37,25 @@ impl ReliableSocketRecv {
             let header = PacketHeader::parse(&buf[..]).unwrap();
 
             if header.kind.is_control() {
-                self.sendack(header.msgid, 0).await?;
-                self.finishmsg(header.kind, None).await;
+                if header.kind == PacketKind::Ack {
+                    if let Err(e) = self.ack_chan.send(AckNotification {
+                        msgid: header.msgid,
+                        blockid: header.blockid,
+                    }) {
+                        log::error!("{}: Failed to send ACK notification on tx channel", ip);
+                        continue
+                    }
+                } else {
+                    self.sendack(header.msgid, 0).await?;
+                    self.finishmsg(header.kind, None).await;
+                }
             }
 
             let mut recv = self.recv.lock().await;
             let (blockid, buffer) = match header.kind {
                 //Transfer data to existing buffer
                 PacketKind::Transfer => (
-                    header.msgoff,
+                    header.blockid,
                     match recv
                         .iter_mut()
                         .find(|m| m.id.map(|id| id.get() == header.msgid).unwrap_or(false)) {
@@ -106,8 +101,8 @@ impl ReliableSocketRecv {
                         }
                     });
                     open_slot.kind = new_msg;
-                    open_slot.msg_len = header.msgoff;
-                    open_slot.data.extend(std::iter::repeat(0u8).take(header.msgoff as usize * BLOCK_SIZE));
+                    open_slot.msg_len = header.blockid;
+                    open_slot.data.extend(std::iter::repeat(0u8).take(header.blockid as usize * BLOCK_SIZE));
                     open_slot.recvd_blocks.clear();
                     
                     (0, open_slot)
@@ -121,8 +116,9 @@ impl ReliableSocketRecv {
             }
             
             let block_data_len = received_bytes - HEADER_SZ;
-            (&mut buffer.data[blockid as usize * BLOCK_SIZE..][..block_data_len]).copy_from_slice(&buf[HEADER_SZ..]);
-            buffer.recvd_blocks.add(header.msgoff);
+            (&mut buffer.data[blockid as usize * BLOCK_SIZE..][..block_data_len])
+                .copy_from_slice(&buf[HEADER_SZ..received_bytes]);
+            buffer.recvd_blocks.add(header.blockid);
 
             self.sendack(header.msgid, blockid).await?;
             
@@ -152,7 +148,7 @@ impl ReliableSocketRecv {
         self.sendraw(&PacketHeader {
             kind: PacketKind::Ack,
             msgid,
-            msgoff: blockid,
+            blockid,
         }).await
     }
 
@@ -162,20 +158,6 @@ impl ReliableSocketRecv {
         self.sock.send(&buf).await?;
         Ok(())
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ReliableSocketRecvError {
-    #[error("I/O error: {0}")]
-    IO(#[from] std::io::Error),
-    #[error("Failed to parse packet header")]
-    PacketHeader(#[from] PacketHeaderParseError),
-    #[error("Transfer packet received with nonexistent message ID {0}")]
-    TransferMessageId(u8),
-    #[error("Sender exceeded the maximum in-transit messages limit of {}", MAX_IN_TRANSIT_MSG)]
-    NoOpenSlot,
-    #[error("New message packet received with invalid message ID {}", INVALID_MSG_ID)]
-    InvalidMsgId,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -20,22 +20,11 @@ pub struct PacketHeader {
     /// ID of the message, rolls over to 1 after passing 255
     pub msgid: u8,
     /// Offset into message buffer (in blocks) to place the payload bytes
-    pub msgoff: u32,
+    pub blockid: u32,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct Packet<P: PacketPayload> {
-    pub header: PacketHeader,
-    pub payload: P,
-}
-
-impl Packet<()> {
-    pub const fn new(header: PacketHeader) -> Self {
-        Self {
-            header,
-            payload: (),
-        }
-    }
+pub trait Packet: Sized + PacketPayload {
+    const TAG: PacketKind;
 }
 
 /// Trait to be implemented by all possible payloads for each type of packet available in the Sendy
@@ -85,14 +74,14 @@ impl PacketPayload for PacketHeader {
         Ok(Self {
             kind,
             msgid,
-            msgoff,
+            blockid: msgoff,
         })
     }
 
     fn write<W: Write>(&self, mut buf: W) -> Result<(), Self::Error> {
         buf.write_u8(self.kind as u8)?;
         buf.write_u8(self.msgid)?;
-        buf.write_u32::<LE>(self.msgoff)?;
+        buf.write_u32::<LE>(self.blockid)?;
 
         Ok(())
     }
