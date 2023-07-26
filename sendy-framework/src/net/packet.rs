@@ -34,8 +34,30 @@ macro_rules! message {
 }
 
 message!{AckMessage Ack}
-message!{TestMessage Test}
 message!{ConnMessage Conn}
+
+pub(crate) struct TestMessage {
+    pub buf: Vec<u8>,
+}
+
+impl Message for TestMessage {
+    const TAG: PacketKind = PacketKind::Test;
+}
+
+impl ToBytes for TestMessage {
+    fn write<W: Write>(&self, mut buf: W) -> Result<(), std::io::Error> {
+        buf.write_all(&self.buf)?;
+        Ok(())
+    }
+}
+
+impl FromBytes for TestMessage {
+    fn parse<R: Read>(mut rbuf: R) -> Result<Self, std::io::Error> {
+        let mut buf = vec![];
+        rbuf.read_to_end(&mut buf)?;
+        Ok(Self{buf})
+    }
+}
 
 pub trait Message: Sized + ToBytes + FromBytes {
     const TAG: PacketKind;

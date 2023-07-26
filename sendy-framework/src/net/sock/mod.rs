@@ -4,7 +4,7 @@ use tokio::{net::UdpSocket, sync::broadcast::{Sender, channel}};
 
 use self::{tx::ReliableSocketTx, recv::{ReliableSocketRecvInternal, ReliableSocketRecv}};
 
-use super::packet::ConnMessage;
+use super::packet::{ConnMessage, TestMessage};
 
 mod recv;
 mod tx;
@@ -42,6 +42,7 @@ impl ReliableSocket {
         };
 
         this.tx.send(ConnMessage).await?;
+        this.tx.send(TestMessage { buf: vec![100u8 ; 10_000] }).await?;
 
         tokio::time::sleep(Duration::from_secs(10)).await;
 

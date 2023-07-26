@@ -118,6 +118,9 @@ impl ReliableSocketRecvInternal {
                                 self.addr,
                                 header.msgid,
                             );
+
+                            self.sendack(header.msgid, header.blockid).await?;
+
                             continue
                         }
                     }
@@ -149,6 +152,7 @@ impl ReliableSocketRecvInternal {
                                 self.addr,
                                 header.msgid,
                             );
+
                             continue
                         }
                     });
