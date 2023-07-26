@@ -51,7 +51,7 @@ impl Default for RecvMessage {
 
 impl ReliableSocketRecv {
     pub(crate) fn new(addr: Arc<SocketAddr>, ack: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>, sock: Arc<UdpSocket>) -> Self {
-        let internal = ReliableSocketRecvInternal::new(addr, ack, sock);
+        let internal = Arc::new(ReliableSocketRecvInternal::new(addr, ack, sock));
         let handle = tokio::task::spawn(internal.recv());
         Self {
             handle,
@@ -74,133 +74,140 @@ impl ReliableSocketRecvInternal {
         self.msg.lock().await.push_back((kind, vec));
     }
 
-    pub(crate) async fn recv(self) -> Result<(), std::io::Error> {
-        let mut buf = [0u8 ; MAX_PACKET_SZ];
-        loop {
-            let received_bytes = self.sock.recv(&mut buf).await?;
-            let header = match PacketHeader::parse(&buf[..]) {
-                Ok(header) => header,
-                Err(e) => {
-                    log::error!("Failed to parse packet header from {}: {}", self.addr, e);
-                    continue
-                }
-            };
-            
-            log::trace!("RECV {:?} {}.{}", header.kind, header.msgid, header.blockid);
-            if header.kind.is_control() {
-                if header.kind == PacketKind::Ack {
-                    let mut ack = self.ack_chan.lock().await;
-                    let id = AckNotification { msgid: header.msgid, blockid: header.blockid };
-                    if let Some(not) = ack.get(&id) {
-                        not.notify_waiters();
-                        ack.remove(&id);
-                    }
-                    continue
-                } else {
-                    self.sendack(header.msgid, header.blockid).await?;
-                    self.finishmsg(header.kind, None).await;
-                    continue
-                }
+    async fn handle_pkt(self: Arc<Self>, received_bytes: usize, buf: [u8 ; MAX_PACKET_SZ]) -> Result<(), std::io::Error> {
+        let header = match PacketHeader::parse(&buf[..]) {
+            Ok(header) => header,
+            Err(e) => {
+                log::error!("Failed to parse packet header from {}: {}", self.addr, e);
+                return Ok(())
             }
-
-            let mut recv = self.recv.lock().await;
-            let (blockid, buffer) = match header.kind {
-                //Transfer data to existing buffer
-                PacketKind::Transfer => (
-                    header.blockid,
-                    match recv
-                        .iter_mut()
-                        .find(|m| m.id.map(|id| id.get() == header.msgid).unwrap_or(false)) {
-                        Some(buf) => buf,
-                        None => {
-                            log::warn!(
-                                "{}: Transfer packet received for nonexistent message {}",
-                                self.addr,
-                                header.msgid,
-                            );
-
-                            self.sendack(header.msgid, header.blockid).await?;
-
-                            continue
-                        }
-                    }
-                ),
-                //Beginning a new message
-                new_msg => {
-                    // We already received the new message packet
-                    if recv.iter().any(|m| m.id.map(|id| id.get() == header.msgid).unwrap_or(false)) {
-                        self.sendack(header.msgid, header.blockid).await?;
-                        continue
-                    }
-
-                    let open_slot = match recv.iter_mut().find(|m| m.id.is_none()) {
-                        Some(slot) => slot,
-                        None => {
-                            log::error!(
-                                "{}: Received new message packet but have no open buffer spaces",
-                                self.addr
-                            );
-                            continue
-                        }
-                    };
-
-                    open_slot.id = Some(match NonZeroU8::new(header.msgid) {
-                        Some(id) => id,
-                        None => {
-                            log::error!(
-                                "{}: Received new message packet with invalid message id {}",
-                                self.addr,
-                                header.msgid,
-                            );
-
-                            continue
-                        }
-                    });
-                    open_slot.kind = new_msg;
-                    open_slot.msg_len = header.blockid;
-                    open_slot.data.clear();
-                    open_slot.data.extend(std::iter::repeat(0u8).take(header.blockid as usize * BLOCK_SIZE));
-                    open_slot.recvd_blocks.clear();
-                    
-                    (0, open_slot)
+        };
+        
+        log::trace!("RECV {:?} {}.{}", header.kind, header.msgid, header.blockid);
+        if header.kind.is_control() {
+            if header.kind == PacketKind::Ack {
+                let mut ack = self.ack_chan.lock().await;
+                let id = AckNotification { msgid: header.msgid, blockid: header.blockid };
+                if let Some(not) = ack.get(&id) {
+                    not.notify_waiters();
+                    ack.remove(&id);
                 }
-            };
-            
-            //Already received packet
-            if buffer.recvd_blocks.contains(blockid) {
+                return Ok(())
+            } else {
                 self.sendack(header.msgid, header.blockid).await?;
-                continue
+                self.finishmsg(header.kind, None).await;
+                return Ok(())
             }
-            
-            let block_data_len = received_bytes - HEADER_SZ;
+        }
 
-            if block_data_len > 0 {
-                (&mut buffer.data[blockid as usize * BLOCK_SIZE..][..block_data_len])
-                    .copy_from_slice(&buf[HEADER_SZ..received_bytes]);
-                buffer.recvd_blocks.add(header.blockid);
+        let mut recv = self.recv.lock().await;
+        let (blockid, buffer) = match header.kind {
+            //Transfer data to existing buffer
+            PacketKind::Transfer => (
+                header.blockid,
+                match recv
+                    .iter_mut()
+                    .find(|m| m.id.map(|id| id.get() == header.msgid).unwrap_or(false)) {
+                    Some(buf) => buf,
+                    None => {
+                        log::warn!(
+                            "{}: Transfer packet received for nonexistent message {}",
+                            self.addr,
+                            header.msgid,
+                        );
+
+                        self.sendack(header.msgid, header.blockid).await?;
+
+                        return Ok(())
+                    }
+                }
+            ),
+            //Beginning a new message
+            new_msg => {
+                // We already received the new message packet
+                if recv.iter().any(|m| m.id.map(|id| id.get() == header.msgid).unwrap_or(false)) {
+                    self.sendack(header.msgid, header.blockid).await?;
+                    return Ok(())
+                }
+
+                let open_slot = match recv.iter_mut().find(|m| m.id.is_none()) {
+                    Some(slot) => slot,
+                    None => {
+                        log::error!(
+                            "{}: Received new message packet but have no open buffer spaces",
+                            self.addr
+                        );
+                        return Ok(())
+                    }
+                };
+
+                open_slot.id = Some(match NonZeroU8::new(header.msgid) {
+                    Some(id) => id,
+                    None => {
+                        log::error!(
+                            "{}: Received new message packet with invalid message id {}",
+                            self.addr,
+                            header.msgid,
+                        );
+
+                        return Ok(())
+                    }
+                });
+                open_slot.kind = new_msg;
+                open_slot.msg_len = header.blockid;
+                open_slot.data.clear();
+                open_slot.data.extend(std::iter::repeat(0u8).take(header.blockid as usize * BLOCK_SIZE));
+                open_slot.recvd_blocks.clear();
+                
+                (0, open_slot)
             }
-
+        };
+        
+        //Already received packet
+        if buffer.recvd_blocks.contains(blockid) {
             self.sendack(header.msgid, header.blockid).await?;
-            
-            let recv_block_count = buffer.recvd_blocks.clone().iter().count();
-            match recv_block_count.cmp(&(buffer.msg_len as usize)) {
-                Ordering::Equal => {
-                    self.finishmsg(buffer.kind, Some(std::mem::take(&mut buffer.data))).await;
-                    buffer.id = None;
-                },
-                Ordering::Greater => {
-                    log::warn!(
-                        "{}: Received {} blocks but expecting only {} - message dropped",
-                        self.sock.peer_addr().unwrap_or(
-                            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
-                        ),
-                        recv_block_count,
-                        buffer.msg_len
-                    );
-                    buffer.id = None;
-                },
-                Ordering::Less => (),
-            }
+            return Ok(())
+        }
+        
+        let block_data_len = received_bytes - HEADER_SZ;
+
+        if block_data_len > 0 {
+            (&mut buffer.data[blockid as usize * BLOCK_SIZE..][..block_data_len])
+                .copy_from_slice(&buf[HEADER_SZ..received_bytes]);
+            buffer.recvd_blocks.add(header.blockid);
+        }
+
+        self.sendack(header.msgid, header.blockid).await?;
+        
+        let recv_block_count = buffer.recvd_blocks.clone().iter().count();
+        match recv_block_count.cmp(&(buffer.msg_len as usize)) {
+            Ordering::Equal => {
+                self.finishmsg(buffer.kind, Some(std::mem::take(&mut buffer.data))).await;
+                buffer.id = None;
+            },
+            Ordering::Greater => {
+                log::warn!(
+                    "{}: Received {} blocks but expecting only {} - message dropped",
+                    self.sock.peer_addr().unwrap_or(
+                        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
+                    ),
+                    recv_block_count,
+                    buffer.msg_len
+                );
+                buffer.id = None;
+            },
+            Ordering::Less => (),
+        }
+
+        Ok(())
+
+    }
+
+    pub(crate) async fn recv(self: Arc<Self>) -> Result<(), std::io::Error> {
+        loop {
+            let mut buf = [0u8 ; MAX_PACKET_SZ];
+            let received_bytes = self.clone().sock.recv(&mut buf).await?;
+            tokio::task::spawn(self.clone().handle_pkt(received_bytes, buf));
         }
     }
 
