@@ -148,6 +148,13 @@ impl ReliableSocketRecvInternal {
             }
         }
 
+        let blockbuf = &buf[HEADER_SZ..received_bytes];
+        let checksum = crc32fast::hash(blockbuf);
+        if checksum != header.checksum {
+            log::warn!("packet {}.{} had invalid checksum {:X} != calculated {:X}", header.msgid, header.blockid, header.checksum, checksum);
+            return Ok(());
+        }
+
         let mut recv = self.recv.lock().await;
         let (blockid, mut buffer) = match header.kind {
             //Transfer data to existing buffer
@@ -229,7 +236,7 @@ impl ReliableSocketRecvInternal {
         if block_data_len > 0 {
             buffer.recvd_bytes += block_data_len as u32;
             (&mut buffer.data[blockid as usize * BLOCK_SIZE..][..block_data_len])
-                .copy_from_slice(&buf[HEADER_SZ..received_bytes]);
+                .copy_from_slice(blockbuf);
             buffer.recvd_blocks.add(header.blockid);
         }
 
@@ -270,6 +277,7 @@ impl ReliableSocketRecvInternal {
             kind: PacketKind::Ack,
             msgid,
             blockid,
+            checksum: 0,
         })
         .await
     }

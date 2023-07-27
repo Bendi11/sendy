@@ -20,6 +20,8 @@ pub(crate) struct PacketHeader {
     pub msgid: u8,
     /// Offset into message buffer (in blocks) to place the payload bytes
     pub blockid: u32,
+    /// Checksum of the payload bytes
+    pub checksum: u32,
 }
 
 macro_rules! message {
@@ -120,11 +122,13 @@ impl FromBytes for PacketHeader {
 
         let msgid = buf.read_u8()?;
         let blockid = buf.read_u32::<LE>()?;
+        let checksum = buf.read_u32::<LE>()?;
 
         Ok(Self {
             kind,
             msgid,
             blockid,
+            checksum,
         })
     }
 }

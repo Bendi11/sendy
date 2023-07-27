@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
-    io::ErrorKind,
+    io::{ErrorKind, Cursor},
     net::SocketAddr,
     sync::{
         atomic::{AtomicU8, Ordering, AtomicUsize},
@@ -8,6 +8,7 @@ use std::{
     }, time::Duration,
 };
 
+use bytes::{Buf, BytesMut, BufMut};
 use futures::stream::FuturesUnordered;
 
 
@@ -18,7 +19,7 @@ use tokio::{
     }, time::Instant,
 };
 
-use crate::net::packet::{Message, PacketHeader, PacketKind, ToBytes};
+use crate::net::{packet::{Message, PacketHeader, PacketKind, ToBytes}, sock::{HEADER_SZ, MAX_PACKET_SZ}};
 
 use super::{AckNotification, BLOCK_SIZE, MAX_IN_TRANSIT_BLOCK, MAX_IN_TRANSIT_MSG, WAIT_FOR_ACK};
 
@@ -31,8 +32,6 @@ pub(crate) struct ReliableSocketTx {
     //With MAX_IN_TRANSIT_MSG permits
     sending_msgs: Semaphore,
     addr: Arc<SocketAddr>,
-    //Limits the no. of packets that may be sent, regulated by packet loss
-    send_choke: Arc<Semaphore>,
     choke: Mutex<usize>,
     //RTT in ms
     rtt: AtomicUsize,
@@ -52,7 +51,6 @@ impl ReliableSocketTx {
             id: AtomicU8::new(0),
             sending_msgs: Semaphore::new(MAX_IN_TRANSIT_MSG),
             addr,
-            send_choke: Arc::new(Semaphore::new(MAX_IN_TRANSIT_BLOCK)),
             rtt: AtomicUsize::new(500),
             dropped_pkts: AtomicUsize::new(0),
             choke: Mutex::new(MAX_IN_TRANSIT_BLOCK),
@@ -72,19 +70,36 @@ impl ReliableSocketTx {
             msgid
         };
 
-        let mut buf = Vec::new();
+        struct MessageWriter(BytesMut);
+
+        impl std::io::Write for MessageWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                for block in buf.chunks(BLOCK_SIZE) {
+                    self.0.extend_from_slice(&[0u8 ; HEADER_SZ]);
+                    self.0.extend_from_slice(block);
+                }
+
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        }
+        
+        let mut buf = MessageWriter(BytesMut::new());
         msg.write(&mut buf)?;
+        let mut buf = buf.0;
 
-        let block_count = buf.len() / BLOCK_SIZE + if buf.len() % BLOCK_SIZE != 0 { 1 } else { 0 };
+        let block_count = buf.len() / MAX_PACKET_SZ + if buf.len() % MAX_PACKET_SZ != 0 { 1 } else { 0 };
 
-        let mut chunks = buf.chunks(BLOCK_SIZE).enumerate();
-        let (_, first) = chunks.next().unwrap_or((0, &[]));
+        let mut chunks = buf.chunks_mut(MAX_PACKET_SZ).enumerate();
+        let (_, first) = chunks.next().unwrap_or((0, &mut []));
 
         let first_pkt = self.send_wait_ack(
             PacketHeader {
                 kind: M::TAG,
                 msgid,
                 blockid: block_count as u32,
+                checksum: 0,
             },
             first,
         );
@@ -97,6 +112,7 @@ impl ReliableSocketTx {
                         kind: PacketKind::Transfer,
                         msgid,
                         blockid: blockid as u32,
+                        checksum: 0,
                     },
                     block,
                 ))
@@ -105,20 +121,18 @@ impl ReliableSocketTx {
         loop {
             let packets = {
                 let choke = self.choke.lock().await;
-                println!("choke to {}", *choke); 
                 let packets = (&mut futures).take(*choke).collect::<FuturesUnordered<_>>();
                 if packets.len() < *choke {
+                    drop(choke);
                     futures::future::join_all(packets).await;
                     break
                 }
 
                 packets
             };
-
+            
             futures::future::join_all(packets).await;
         }
-
-        //watch.abort();
 
         println!("dropped: {:?} packets, rtt {:?} ms", self.dropped_pkts, self.rtt);
         Ok(())
@@ -126,8 +140,8 @@ impl ReliableSocketTx {
 
     async fn send_wait_ack(
         &self,
-        pkt: PacketHeader,
-        body: impl ToBytes,
+        mut pkt: PacketHeader,
+        buf: &mut [u8],
     ) -> Result<(), std::io::Error> {
         let ack = Arc::new(Notify::new());
         self.ack_chan.lock().await.insert(
@@ -135,26 +149,25 @@ impl ReliableSocketTx {
             ack.clone()
         );
         
-        let mut buf = vec![];
-        pkt.write(&mut buf)
-            .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
+        let checksum = crc32fast::hash(&buf[HEADER_SZ..]);
+        pkt.checksum = checksum;
+        
+        let mut buf = buf.writer();
+        pkt.write(&mut buf)?;
+        let buf = buf.into_inner();
 
-        body.write(&mut buf)
-            .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
 
         let send_time = Mutex::new(Instant::now());
         
         #[allow(unreachable_code)]
         let resend = async {
             loop {
-                //let permit = self.send_choke.acquire().await.unwrap();
                 log::trace!("SENT {:?} {}.{}", pkt.kind, pkt.msgid, pkt.blockid);
-                self.sock.send_to(&buf[..], &*self.addr).await?;
+                self.sock.send_to(&buf, &*self.addr).await?;
                 *send_time.lock().await = Instant::now();
                 tokio::time::sleep(Duration::from_millis(self.rtt.load(Ordering::Relaxed) as u64) + WAIT_FOR_ACK).await;
                 self.dropped_pkts.fetch_add(1, Ordering::SeqCst);
 
-                //drop(permit);
                 let mut choke = self.choke.lock().await;
                 *choke = (*choke / 2).min(1);
                 tokio::task::yield_now().await;
@@ -175,7 +188,6 @@ impl ReliableSocketTx {
                 let mut choke = self.choke.lock().await;
                 if *choke < MAX_IN_TRANSIT_BLOCK {
                     *choke += 1;
-                    //self.send_choke.add_permits(1);
                 }
                 Ok(())
             },
