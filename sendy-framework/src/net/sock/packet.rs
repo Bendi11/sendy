@@ -1,4 +1,4 @@
-use std::{io::ErrorKind, num::NonZeroU8};
+use std::num::NonZeroU8;
 
 use bytes::{BufMut, Buf};
 
