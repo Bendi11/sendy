@@ -108,6 +108,7 @@ impl ToBytes for PacketHeader {
         buf.write_u8(self.kind as u8)?;
         buf.write_u8(self.msgid)?;
         buf.write_u32::<LE>(self.blockid)?;
+        buf.write_u32::<LE>(self.checksum)?;
 
         Ok(())
     }

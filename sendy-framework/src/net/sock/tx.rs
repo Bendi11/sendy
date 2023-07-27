@@ -8,7 +8,7 @@ use std::{
     }, time::Duration,
 };
 
-use bytes::{Buf, BytesMut, BufMut};
+use bytes::BytesMut;
 use futures::stream::FuturesUnordered;
 
 
@@ -142,7 +142,7 @@ impl ReliableSocketTx {
     async fn send_wait_ack(
         &self,
         mut pkt: PacketHeader,
-        buf: &mut [u8],
+        mut buf: &mut [u8],
     ) -> Result<(), std::io::Error> {
         let ack = Arc::new(Notify::new());
         self.ack_chan.lock().await.insert(
@@ -153,17 +153,14 @@ impl ReliableSocketTx {
         let checksum = crc32fast::hash(&buf[HEADER_SZ..]);
         pkt.checksum = checksum;
         
-        let mut buf = buf.writer();
-        pkt.write(&mut buf)?;
-        let buf = buf.into_inner();
-
+        pkt.write(&mut buf[..HEADER_SZ])?;
 
         let send_time = Mutex::new(Instant::now());
         
         #[allow(unreachable_code)]
         let resend = async {
             loop {
-                log::trace!("SENT {:?} {}.{}", pkt.kind, pkt.msgid, pkt.blockid);
+                log::trace!("SENT {:?} {}.{} {:X}", pkt.kind, pkt.msgid, pkt.blockid, pkt.checksum);
                 self.sock.send_to(&buf, &*self.addr).await?;
                 *send_time.lock().await = Instant::now();
                 tokio::time::sleep(Duration::from_millis(self.rtt.load(Ordering::Relaxed) as u64) + WAIT_FOR_ACK).await;

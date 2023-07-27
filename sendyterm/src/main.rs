@@ -22,9 +22,9 @@ async fn main() {
     let args = Args::parse();
 
     let sock = ReliableSocket::tunnel_connect(args.addr).await.unwrap();
-    //let (_, msg) = sock.recv().await;
-    sock.send(TestMessage { buf: String::from_utf8_lossy(&(0..500_000).map(|_| 0u8).collect::<Vec<u8>>()).into_owned() } ).await.unwrap();
+    sock.send(TestMessage { buf: String::from_utf8_lossy(&(0..100_000).map(|_| 0u8).collect::<Vec<u8>>()).into_owned() } ).await.unwrap();
+    let (_, msg) = sock.recv().await;
     //println!("Received: {}", String::from_utf8_lossy(&msg));
 
-    //tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
 }
