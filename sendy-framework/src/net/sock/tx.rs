@@ -92,7 +92,8 @@ impl ReliableSocketTx {
         let block_count = buf.len() / MAX_PACKET_SZ + if buf.len() % MAX_PACKET_SZ != 0 { 1 } else { 0 };
 
         let mut chunks = buf.chunks_mut(MAX_PACKET_SZ).enumerate();
-        let (_, first) = chunks.next().unwrap_or((0, &mut []));
+        let mut default_header = [0u8 ; HEADER_SZ];
+        let (_, first) = chunks.next().unwrap_or((0, &mut default_header));
 
         let first_pkt = self.send_wait_ack(
             PacketHeader {
