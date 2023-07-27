@@ -7,6 +7,12 @@ use crate::net::msg::MessageKind;
 /// 'minimum maximum reassembly buffer size' guaranteed to be deliverable, minus IP and UDP headers
 pub(crate) const MAX_SAFE_UDP_PAYLOAD: usize = 500;
 
+/// The encoded size of a [PacketHeader] in bytes
+pub(crate) const HEADER_SZ: usize = 10;
+
+/// The space available to a single packet for payload, after IP, UDP, and Sendy headers
+pub(crate) const BLOCK_SIZE: usize = MAX_SAFE_UDP_PAYLOAD - HEADER_SZ;
+
 /// A 10 byte packet header with packet identifiers, checksum, and packet kind markers
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PacketHeader {
@@ -69,6 +75,8 @@ impl PacketKind {
 pub trait ToBytes: Sized {
     /// Write the representation of this payload to a buffer of bytes
     fn write<W: BufMut>(&self, buf: W);
+    /// Provide the encoded size in bytes of this value
+    fn size_hint(&self) -> Option<usize> { None }
 }
 
 /// Trait implemented by all types that may be parsed from a byte buffer

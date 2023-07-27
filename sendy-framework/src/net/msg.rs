@@ -10,7 +10,7 @@ pub enum MessageKind {
 
 /// Trait satisfied by all types that can be serialized to bytes and sent to other nodes
 pub trait Message: ToBytes + FromBytes {
-    const KIND: MessageKind;
+    const KIND: PacketKind;
 }
 
 impl TryFrom<u8> for MessageKind {

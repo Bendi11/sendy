@@ -2,16 +2,11 @@ mod recv;
 mod tx;
 mod packet;
 
-use std::{time::Duration, sync::atomic::AtomicUsize};
+use std::sync::{atomic::AtomicUsize, Arc};
 
 pub(crate) use packet::PacketKind;
 pub use packet::{ToBytes, FromBytes};
-
-const MAX_IN_TRANSIT_BLOCK: usize = 2;
-const MAX_PACKET_SZ: usize = 50_000;
-const HEADER_SZ: usize = 10;
-const BLOCK_SIZE: usize = MAX_PACKET_SZ - HEADER_SZ;
-const WAIT_FOR_ACK: Duration = Duration::from_millis(250);
+use tokio::net::UdpSocket;
 
 /// Configuration options for a socket connection
 #[derive(Debug)]
@@ -26,4 +21,15 @@ pub struct SocketConfig {
     pub extra_wait_for_ack_ms: AtomicUsize,
 }
 
+/// Wrapper over a UDP socket that is capable of UDP hole punching to connect to another peer, with
+/// a minimal reliability layer that guarantees messages are received in the order they are
+/// transmitted (unless they dropped for another reason - e.g. the message was too large to accomodate)
+pub struct ReliableSocket(Arc<ReliableSocketInternal>);
 
+/// Internal state for the [ReliableSocket], wrapped in an [Arc]
+pub(crate) struct ReliableSocketInternal {
+    /// The underlying UDP socket to send and receive with
+    sock: UdpSocket,
+    /// Runtime-configurable options for performance and rate limiting
+    cfg: SocketConfig,
+}

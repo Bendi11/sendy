@@ -16,7 +16,6 @@ use tokio::{
 
 use super::{
     packet::{PacketHeader, PacketKind, ToBytes},
-    AckNotification, BLOCK_SIZE, HEADER_SZ, MAX_IN_TRANSIT_MSG, MAX_PACKET_SZ,
 };
 
 const MSG_QUEUE_LEN: usize = 16;
