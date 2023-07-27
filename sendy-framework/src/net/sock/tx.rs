@@ -3,9 +3,9 @@ use std::{
     io::ErrorKind,
     net::SocketAddr,
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicU8, Ordering, AtomicUsize},
         Arc,
-    },
+    }, time::Duration,
 };
 
 use futures::stream::FuturesUnordered;
@@ -15,12 +15,14 @@ use tokio::{
     net::UdpSocket,
     sync::{
         Mutex, Notify, Semaphore,
-    },
+    }, time::Instant,
 };
 
 use crate::net::packet::{Message, PacketHeader, PacketKind, ToBytes};
 
 use super::{AckNotification, BLOCK_SIZE, MAX_IN_TRANSIT_BLOCK, MAX_IN_TRANSIT_MSG, WAIT_FOR_ACK};
+
+const RTT_ESTIMATION_ALPHA: f32 = 0.5;
 
 pub(crate) struct ReliableSocketTx {
     ack_chan: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>,
@@ -29,6 +31,12 @@ pub(crate) struct ReliableSocketTx {
     //With MAX_IN_TRANSIT_MSG permits
     sending_msgs: Semaphore,
     addr: Arc<SocketAddr>,
+    //Limits the no. of packets that may be sent, regulated by packet loss
+    send_choke: Semaphore,
+    //RTT in ms
+    rtt: AtomicUsize,
+    //Total number of dropped packets
+    dropped_pkts: AtomicUsize,
 }
 
 impl ReliableSocketTx {
@@ -43,6 +51,9 @@ impl ReliableSocketTx {
             id: AtomicU8::new(0),
             sending_msgs: Semaphore::new(MAX_IN_TRANSIT_MSG),
             addr,
+            send_choke: Semaphore::new(MAX_IN_TRANSIT_BLOCK),
+            rtt: AtomicUsize::new(500),
+            dropped_pkts: AtomicUsize::new(0),
         }
     }
 
@@ -68,63 +79,32 @@ impl ReliableSocketTx {
         let mut chunks = buf.chunks(BLOCK_SIZE).enumerate();
         let (_, first) = chunks.next().unwrap_or((0, &[]));
 
-        let send_limit = Arc::new(Semaphore::new(MAX_IN_TRANSIT_BLOCK));
-
-        let first_pkt = {
-            let mut chan = self.ack_chan.lock().await;
-
-            let not = Arc::new(Notify::new());
-            chan.insert(
-                AckNotification {
-                    msgid,
-                    blockid: block_count as u32,
-                },
-                not.clone(),
-            );
-
-            self.send_wait_ack(
-                PacketHeader {
-                    kind: M::TAG,
-                    msgid,
-                    blockid: block_count as u32,
-                },
-                first,
-                send_limit.clone(),
-                not,
-            )
-        };
+        let first_pkt = self.send_wait_ack(
+            PacketHeader {
+                kind: M::TAG,
+                msgid,
+                blockid: block_count as u32,
+            },
+            first,
+        );
 
         first_pkt.await?;
 
-        let futures = {
-            let mut chan = self.ack_chan.lock().await;
-
-            chunks
-                .map(|(blockid, block)| {
-                    let notify_ack = Arc::new(Notify::new());
-                    chan.insert(
-                        AckNotification {
-                            msgid,
-                            blockid: blockid as u32,
-                        },
-                        notify_ack.clone(),
-                    );
-
-                    Box::pin(self.send_wait_ack(
-                        PacketHeader {
-                            kind: PacketKind::Transfer,
-                            msgid,
-                            blockid: blockid as u32,
-                        },
-                        block,
-                        send_limit.clone(),
-                        notify_ack,
-                    ))
-                })
-                .collect::<FuturesUnordered<_>>()
-        };
+        let futures = chunks
+            .map(|(blockid, block)| Box::pin(self.send_wait_ack(
+                    PacketHeader {
+                        kind: PacketKind::Transfer,
+                        msgid,
+                        blockid: blockid as u32,
+                    },
+                    block,
+                ))
+            )
+            .collect::<FuturesUnordered<_>>();
 
         futures::future::join_all(futures).await;
+
+        println!("dropped: {:?} packets, rtt {:?} ms", self.dropped_pkts, self.rtt);
         Ok(())
     }
 
@@ -132,24 +112,34 @@ impl ReliableSocketTx {
         &self,
         pkt: PacketHeader,
         body: impl ToBytes,
-        block: Arc<Semaphore>,
-        ack: Arc<Notify>,
     ) -> Result<(), std::io::Error> {
+        let ack = Arc::new(Notify::new());
+        self.ack_chan.lock().await.insert(
+            AckNotification { msgid: pkt.msgid, blockid: pkt.blockid },
+            ack.clone()
+        );
+
         let mut buf = vec![];
         pkt.write(&mut buf)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
 
         body.write(&mut buf)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
+        
+        let mut permit = self.send_choke.acquire().await.unwrap();
 
-        let permit = block.acquire().await;
+        let send_time = Instant::now();
         
         #[allow(unreachable_code)]
         let resend = async {
             loop {
                 log::trace!("SENT {:?} {}.{}", pkt.kind, pkt.msgid, pkt.blockid);
                 self.sock.send_to(&buf[..], &*self.addr).await?;
-                tokio::time::sleep(WAIT_FOR_ACK).await;
+                tokio::time::sleep(Duration::from_millis(self.rtt.load(Ordering::Relaxed) as u64) + WAIT_FOR_ACK).await;
+                tokio::task::yield_now().await;
+                self.dropped_pkts.fetch_add(1, Ordering::SeqCst);
+                let old = std::mem::replace(&mut permit, self.send_choke.acquire().await.unwrap());
+                old.forget();
             }
 
             Result::<(), std::io::Error>::Ok(())
@@ -157,6 +147,13 @@ impl ReliableSocketTx {
 
         tokio::select! {
             _ = ack.notified() => {
+                let rtt = send_time.elapsed().as_millis() as usize;
+                let _ = self.rtt.fetch_update(
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    |v| Some((RTT_ESTIMATION_ALPHA * (v as f32) + (1. - RTT_ESTIMATION_ALPHA) * (rtt as f32)) as usize)
+                );
+
                 drop(permit);
                 Ok(())
             },
