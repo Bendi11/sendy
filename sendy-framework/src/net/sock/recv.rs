@@ -13,10 +13,9 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::net::packet::FromBytes;
 
 use super::{
-    super::packet::{PacketHeader, PacketKind, ToBytes},
+    packet::{PacketHeader, PacketKind, ToBytes},
     AckNotification, BLOCK_SIZE, HEADER_SZ, MAX_IN_TRANSIT_MSG, MAX_PACKET_SZ,
 };
 

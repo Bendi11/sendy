@@ -1,6 +1,23 @@
 use std::io::{ErrorKind, Read, Write};
 
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
+use bytes::{BufMut, Buf};
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PacketHeader {
+    pub kind: PacketKind,
+    pub id: PacketId, 
+    /// Checksum of the payload bytes
+    pub checksum: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PacketId {
+    /// ID of the message, rolls over to 1 after passing 255
+    pub msgid: u8,
+    /// Offset into message buffer (in blocks) to place the payload bytes
+    pub blockid: u32,
+}
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -13,39 +30,7 @@ pub enum PacketKind {
     Transfer = 3,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct PacketHeader {
-    pub kind: PacketKind,
-    /// ID of the message, rolls over to 1 after passing 255
-    pub msgid: u8,
-    /// Offset into message buffer (in blocks) to place the payload bytes
-    pub blockid: u32,
-    /// Checksum of the payload bytes
-    pub checksum: u32,
-}
-
-macro_rules! message {
-    ($name:ident $tag:ident) => {
-        #[derive(Clone, Copy, Debug)]
-        pub(crate) struct $name;
-        impl Message for $name {
-            const TAG: PacketKind = PacketKind::$tag;
-        }
-        impl ToBytes for $name {
-            fn write<W: Write>(&self, _buf: W) -> Result<(), std::io::Error> {
-                Ok(())
-            }
-        }
-        impl FromBytes for $name {
-            fn parse<R: Read>(_buf: R) -> Result<Self, std::io::Error> {
-                Ok(Self)
-            }
-        }
-    };
-}
-
-message! {AckMessage Ack}
-message! {ConnMessage Conn}
+pub struct AckMessage;
 
 pub struct TestMessage {
     pub buf: String,
@@ -56,16 +41,13 @@ impl Message for TestMessage {
 }
 
 impl ToBytes for TestMessage {
-    fn write<W: Write>(&self, mut buf: W) -> Result<(), std::io::Error> {
-        buf.write_all(self.buf.as_bytes())?;
-        Ok(())
-    }
+    fn write<W: BufMut>(&self, mut buf: W) { buf.put(self.buf.as_bytes()); }
 }
 
 impl FromBytes for TestMessage {
-    fn parse<R: Read>(mut rbuf: R) -> Result<Self, std::io::Error> {
-        let mut buf = vec![];
-        rbuf.read_to_end(&mut buf)?;
+    fn parse<R: Buf>(mut rbuf: R) -> Result<Self, std::io::Error> {
+        let mut buf = Vec::with_capacity(rbuf.remaining());
+        buf.put(rbuf);
         Ok(Self { buf: String::from_utf8_lossy(&buf).into_owned() })
     }
 }
@@ -78,57 +60,51 @@ pub trait Message: Sized + ToBytes + FromBytes {
 /// protocol
 pub trait ToBytes: Sized {
     /// Write the representation of this payload to a buffer of bytes
-    fn write<W: Write>(&self, buf: W) -> Result<(), std::io::Error>;
+    fn write<W: BufMut>(&self, buf: W);
 }
 
 pub trait FromBytes: Sized {
-    fn parse<R: Read>(buf: R) -> Result<Self, std::io::Error>;
-}
-
-impl ToBytes for () {
-    fn write<W: Write>(&self, _: W) -> Result<(), std::io::Error> {
-        Ok(())
-    }
-}
-
-impl FromBytes for () {
-    fn parse<R: Read>(_buf: R) -> Result<Self, std::io::Error> {
-        Ok(())
-    }
-}
-
-impl ToBytes for &[u8] {
-    fn write<W: Write>(&self, mut buf: W) -> Result<(), std::io::Error> {
-        buf.write_all(&self)
-    }
+    fn parse<R: Buf>(buf: R) -> Result<Self, std::io::Error>;
 }
 
 impl ToBytes for PacketHeader {
-    fn write<W: Write>(&self, mut buf: W) -> Result<(), std::io::Error> {
-        buf.write_u8(self.kind as u8)?;
-        buf.write_u8(self.msgid)?;
-        buf.write_u32::<LE>(self.blockid)?;
-        buf.write_u32::<LE>(self.checksum)?;
+    fn write<W: BufMut>(&self, mut buf: W) {
+        buf.put_u8(self.kind as u8);
+        self.id.write(&mut buf);
+        buf.put_u32_le(self.checksum);
+    }
+}
 
-        Ok(())
+impl ToBytes for PacketId {
+    fn write<W: BufMut>(&self, mut buf: W) {
+        buf.put_u8(self.msgid);
+        buf.put_u32_le(self.blockid);
+    }
+}
+
+impl FromBytes for PacketId {
+    fn parse<R: Buf>(mut buf: R) -> Result<Self, std::io::Error> {
+        let msgid = buf.get_u8();
+        let blockid = buf.get_u32_le();
+        Ok(Self {
+            msgid,
+            blockid,
+        })
     }
 }
 
 impl FromBytes for PacketHeader {
-    fn parse<R: Read>(mut buf: R) -> Result<Self, std::io::Error> {
-        let kind = buf.read_u8()?;
+    fn parse<R: Buf>(mut buf: R) -> Result<Self, std::io::Error> {
+        let kind = buf.get_u8();
 
         let kind = PacketKind::try_from(kind)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
-
-        let msgid = buf.read_u8()?;
-        let blockid = buf.read_u32::<LE>()?;
-        let checksum = buf.read_u32::<LE>()?;
+        let id = PacketId::parse(&mut buf)?;
+        let checksum = buf.get_u32_le();
 
         Ok(Self {
             kind,
-            msgid,
-            blockid,
+            id,
             checksum,
         })
     }
