@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     io::ErrorKind,
     net::SocketAddr,
     sync::{
@@ -32,7 +32,8 @@ pub(crate) struct ReliableSocketTx {
     sending_msgs: Semaphore,
     addr: Arc<SocketAddr>,
     //Limits the no. of packets that may be sent, regulated by packet loss
-    send_choke: Semaphore,
+    send_choke: Arc<Semaphore>,
+    choke: Mutex<usize>,
     //RTT in ms
     rtt: AtomicUsize,
     //Total number of dropped packets
@@ -51,9 +52,10 @@ impl ReliableSocketTx {
             id: AtomicU8::new(0),
             sending_msgs: Semaphore::new(MAX_IN_TRANSIT_MSG),
             addr,
-            send_choke: Semaphore::new(MAX_IN_TRANSIT_BLOCK),
+            send_choke: Arc::new(Semaphore::new(MAX_IN_TRANSIT_BLOCK)),
             rtt: AtomicUsize::new(500),
             dropped_pkts: AtomicUsize::new(0),
+            choke: Mutex::new(MAX_IN_TRANSIT_BLOCK),
         }
     }
 
@@ -71,8 +73,7 @@ impl ReliableSocketTx {
         };
 
         let mut buf = Vec::new();
-        msg.write(&mut buf)
-            .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
+        msg.write(&mut buf)?;
 
         let block_count = buf.len() / BLOCK_SIZE + if buf.len() % BLOCK_SIZE != 0 { 1 } else { 0 };
 
@@ -90,7 +91,7 @@ impl ReliableSocketTx {
 
         first_pkt.await?;
 
-        let futures = chunks
+        let mut futures = chunks
             .map(|(blockid, block)| Box::pin(self.send_wait_ack(
                     PacketHeader {
                         kind: PacketKind::Transfer,
@@ -99,10 +100,25 @@ impl ReliableSocketTx {
                     },
                     block,
                 ))
-            )
-            .collect::<FuturesUnordered<_>>();
+            );
 
-        futures::future::join_all(futures).await;
+        loop {
+            let packets = {
+                let choke = self.choke.lock().await;
+                println!("choke to {}", *choke); 
+                let packets = (&mut futures).take(*choke).collect::<FuturesUnordered<_>>();
+                if packets.len() < *choke {
+                    futures::future::join_all(packets).await;
+                    break
+                }
+
+                packets
+            };
+
+            futures::future::join_all(packets).await;
+        }
+
+        //watch.abort();
 
         println!("dropped: {:?} packets, rtt {:?} ms", self.dropped_pkts, self.rtt);
         Ok(())
@@ -118,28 +134,30 @@ impl ReliableSocketTx {
             AckNotification { msgid: pkt.msgid, blockid: pkt.blockid },
             ack.clone()
         );
-
+        
         let mut buf = vec![];
         pkt.write(&mut buf)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
 
         body.write(&mut buf)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
-        
-        let mut permit = self.send_choke.acquire().await.unwrap();
 
-        let send_time = Instant::now();
+        let send_time = Mutex::new(Instant::now());
         
         #[allow(unreachable_code)]
         let resend = async {
             loop {
+                //let permit = self.send_choke.acquire().await.unwrap();
                 log::trace!("SENT {:?} {}.{}", pkt.kind, pkt.msgid, pkt.blockid);
                 self.sock.send_to(&buf[..], &*self.addr).await?;
+                *send_time.lock().await = Instant::now();
                 tokio::time::sleep(Duration::from_millis(self.rtt.load(Ordering::Relaxed) as u64) + WAIT_FOR_ACK).await;
-                tokio::task::yield_now().await;
                 self.dropped_pkts.fetch_add(1, Ordering::SeqCst);
-                let old = std::mem::replace(&mut permit, self.send_choke.acquire().await.unwrap());
-                old.forget();
+
+                //drop(permit);
+                let mut choke = self.choke.lock().await;
+                *choke = (*choke / 2).min(1);
+                tokio::task::yield_now().await;
             }
 
             Result::<(), std::io::Error>::Ok(())
@@ -147,14 +165,18 @@ impl ReliableSocketTx {
 
         tokio::select! {
             _ = ack.notified() => {
-                let rtt = send_time.elapsed().as_millis() as usize;
+                let rtt = send_time.lock().await.elapsed().as_millis() as usize;
                 let _ = self.rtt.fetch_update(
                     Ordering::SeqCst,
                     Ordering::SeqCst,
                     |v| Some((RTT_ESTIMATION_ALPHA * (v as f32) + (1. - RTT_ESTIMATION_ALPHA) * (rtt as f32)) as usize)
                 );
-
-                drop(permit);
+                
+                let mut choke = self.choke.lock().await;
+                if *choke < MAX_IN_TRANSIT_BLOCK {
+                    *choke += 1;
+                    //self.send_choke.add_permits(1);
+                }
                 Ok(())
             },
             Err(e) = resend => {

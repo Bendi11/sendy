@@ -21,8 +21,8 @@ mod recv;
 mod tx;
 
 const MAX_IN_TRANSIT_MSG: usize = 5;
-const MAX_IN_TRANSIT_BLOCK: usize = 255;
-const MAX_PACKET_SZ: usize = 500;
+const MAX_IN_TRANSIT_BLOCK: usize = 251;
+const MAX_PACKET_SZ: usize = 50_000;
 const HEADER_SZ: usize = 6;
 const BLOCK_SIZE: usize = MAX_PACKET_SZ - HEADER_SZ;
 const WAIT_FOR_ACK: Duration = Duration::from_millis(500);

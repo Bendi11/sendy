@@ -15,15 +15,15 @@ pub struct Args {
 #[tokio::main]
 async fn main() {
     stderrlog::new()
-        .verbosity(log::LevelFilter::Error)
+        .verbosity(log::LevelFilter::Trace)
         .init()
         .unwrap();
 
     let args = Args::parse();
 
     let sock = ReliableSocket::tunnel_connect(args.addr).await.unwrap();
-    sock.send(TestMessage { buf: (0..1000000).map(|idx| format!("{}\n", idx)).collect::<String>() } ).await.unwrap();
-    let (_, msg) = sock.recv().await;
+    //let (_, msg) = sock.recv().await;
+    sock.send(TestMessage { buf: (0..10_000_000).map(|idx| format!("{}\n", idx)).collect::<String>() } ).await.unwrap();
     //println!("Received: {}", String::from_utf8_lossy(&msg));
 
     tokio::time::sleep(Duration::from_secs(5)).await;
