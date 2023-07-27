@@ -1,3 +1,3 @@
 pub mod conn;
-pub mod packet;
+pub mod msg;
 pub mod sock;

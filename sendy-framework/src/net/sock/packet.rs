@@ -1,91 +1,96 @@
-use std::io::{ErrorKind, Read, Write};
+use std::{io::ErrorKind, num::NonZeroU8};
 
-use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 use bytes::{BufMut, Buf};
 
+use crate::net::msg::MessageKind;
+
+/// 'minimum maximum reassembly buffer size' guaranteed to be deliverable, minus IP and UDP headers
+pub(crate) const MAX_SAFE_UDP_PAYLOAD: usize = 500;
+
+/// A 10 byte packet header with packet identifiers, checksum, and packet kind markers
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PacketHeader {
+    /// 1 byte representing the kind of packet this is, see [PacketKind] for usage
     pub kind: PacketKind,
+    /// The message and block id of this packet, see [PacketId] for usage
     pub id: PacketId, 
-    /// Checksum of the payload bytes
+    /// CRC32 checksum of the following payload bytes
     pub checksum: u32,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct PacketId {
-    /// ID of the message, rolls over to 1 after passing 255
-    pub msgid: u8,
-    /// Offset into message buffer (in blocks) to place the payload bytes
-    pub blockid: u32,
-}
-
-#[repr(u8)]
+/// A unique identifier placed at the top of each UDP packet
+///
+/// Contains a message ID, identifying the message that this packet's payload is a part of,
+/// and a block id, identifying where in the receiver's message buffer the payload bytes should be
+/// placed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PacketKind {
+pub(crate) struct PacketId {
+    /// ID of the message, rolls over to 1 after passing 255 because
+    /// 0 is reserved to mark invalid / not received packets
+    pub msgid: NonZeroU8,
+    /// Offset into receiver's message buffer (in MAX_BLOCK_SIZE blocks, NOT bytes) to place the packet's payload bytes
+    pub blockid: u16,
+}
+
+/// Unique identifier assigned to each packet, identifies the purpose of the packet
+///
+/// There are two primary kinds of packets sent:
+/// ## Control:
+///  - Control packets are single packets with payload sizes under the MAX_SAFE_UDP_PAYLOAD
+///  - Used to transfer messages between nodes for metadata like window sizes
+/// ## Message:
+///  - Message packets signal the beginning of a TRANSFER packet stream
+///  - Message packets are used for application-level messaging between nodes
+///  - The `blockid` field of a message packet should signal the total size of the incoming
+///  message in MAX_BLOCK_SIZE blocks, and the payload is always copied to the message buffer at
+///  offset 0
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PacketKind {
+    /// Used to establish a connection, using UDP tunneling both nodes must send CONN packets until
+    /// they receive a corresponding ACK from the other node
     Conn = 0,
+    /// Used to signal that a packet identified by the [PacketId] of the header has been received
     Ack = 1,
-
-    Test = 2,
-    /// Transfer bytes to a queued buffer
-    Transfer = 3,
+    /// Signals that the following payload bytes are to be placed at the offset into the message
+    /// given by the [PacketId] of the header
+    Transfer = 2,
+    
+    /// An application-level message packet
+    Message(MessageKind),
 }
 
-pub struct AckMessage;
-
-pub struct TestMessage {
-    pub buf: String,
+impl PacketKind {
+    /// The tag to be used for the message tag with the lowest ID in the
+    /// [MessageKind] enum
+    pub const MSG_TAG_OFFSET: u8 = 3;
 }
 
-impl Message for TestMessage {
-    const TAG: PacketKind = PacketKind::Test;
-}
-
-impl ToBytes for TestMessage {
-    fn write<W: BufMut>(&self, mut buf: W) { buf.put(self.buf.as_bytes()); }
-}
-
-impl FromBytes for TestMessage {
-    fn parse<R: Buf>(mut rbuf: R) -> Result<Self, std::io::Error> {
-        let mut buf = Vec::with_capacity(rbuf.remaining());
-        buf.put(rbuf);
-        Ok(Self { buf: String::from_utf8_lossy(&buf).into_owned() })
-    }
-}
-
-pub trait Message: Sized + ToBytes + FromBytes {
-    const TAG: PacketKind;
-}
-
-/// Trait to be implemented by all possible payloads for each type of packet available in the Sendy
-/// protocol
+/// Trait to be implemented by all types that can be written to a byte buffer 
 pub trait ToBytes: Sized {
     /// Write the representation of this payload to a buffer of bytes
     fn write<W: BufMut>(&self, buf: W);
 }
 
+/// Trait implemented by all types that may be parsed from a byte buffer
 pub trait FromBytes: Sized {
+    /// Read bytes the given buffer (multi-byte words should be little endian) to create an
+    /// instance of `Self`
     fn parse<R: Buf>(buf: R) -> Result<Self, std::io::Error>;
-}
-
-impl ToBytes for PacketHeader {
-    fn write<W: BufMut>(&self, mut buf: W) {
-        buf.put_u8(self.kind as u8);
-        self.id.write(&mut buf);
-        buf.put_u32_le(self.checksum);
-    }
 }
 
 impl ToBytes for PacketId {
     fn write<W: BufMut>(&self, mut buf: W) {
-        buf.put_u8(self.msgid);
-        buf.put_u32_le(self.blockid);
+        buf.put_u8(self.msgid.get());
+        buf.put_u16_le(self.blockid);
     }
 }
 
 impl FromBytes for PacketId {
     fn parse<R: Buf>(mut buf: R) -> Result<Self, std::io::Error> {
         let msgid = buf.get_u8();
-        let blockid = buf.get_u32_le();
+        let msgid = NonZeroU8::new(msgid)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Packet ID with invalid message ID 0"))?;
+        let blockid = buf.get_u16_le();
         Ok(Self {
             msgid,
             blockid,
@@ -93,13 +98,18 @@ impl FromBytes for PacketId {
     }
 }
 
+impl ToBytes for PacketHeader {
+    fn write<W: BufMut>(&self, mut buf: W) {
+        self.kind.write(buf);
+        self.id.write(buf);
+        buf.put_u32_le(self.checksum);
+    }
+}
+
 impl FromBytes for PacketHeader {
     fn parse<R: Buf>(mut buf: R) -> Result<Self, std::io::Error> {
-        let kind = buf.get_u8();
-
-        let kind = PacketKind::try_from(kind)
-            .map_err(|e| std::io::Error::new(ErrorKind::InvalidInput, e))?;
-        let id = PacketId::parse(&mut buf)?;
+        let kind = PacketKind::parse(buf)?;
+        let id = PacketId::parse(buf)?;
         let checksum = buf.get_u32_le();
 
         Ok(Self {
@@ -111,7 +121,8 @@ impl FromBytes for PacketHeader {
 }
 
 impl PacketKind {
-    /// If the packet is a control packet that will not send more bytes
+    /// If the packet is a control packet that will not be followed by more [PacketKind::Transfer]
+    /// packets, see [PacketKind] for more
     pub const fn is_control(&self) -> bool {
         match self {
             Self::Conn | Self::Ack => true,
@@ -120,35 +131,26 @@ impl PacketKind {
     }
 }
 
-impl TryFrom<u8> for PacketKind {
-    type Error = PacketKindParseErr;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+impl FromBytes for PacketKind {
+    fn parse<B: Buf>(mut buf: B) -> Result<Self, std::io::Error> {
+        let value = buf.get_u8();
         Ok(match value {
             0 => Self::Conn,
             1 => Self::Ack,
-            2 => Self::Test,
-            3 => Self::Transfer,
-            other => return Err(PacketKindParseErr(other)),
+            2 => Self::Transfer,
+            other => Self::Message(MessageKind::try_from(value)?),
         })
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("Invalid packet type identifier: {0}")]
-pub struct PacketKindParseErr(pub u8);
-
-#[derive(Debug, thiserror::Error)]
-pub enum PacketParseError {
-    #[error("Failed to parse packet header: {0}")]
-    Header(#[from] PacketHeaderParseError),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum PacketHeaderParseError {
-    #[error("Failed to parse packet kind: {0}")]
-    Kind(#[from] PacketKindParseErr),
-
-    #[error("I/O Error: {0}")]
-    IO(#[from] std::io::Error),
+impl ToBytes for PacketKind {
+    fn write<W: BufMut>(&self, mut buf: W) {
+        let v = match self {
+            Self::Conn => 0,
+            Self::Ack => 1,
+            Self::Transfer => 2,
+            Self::Message(msg) => *msg as u8,
+        };
+        buf.put_u8(v);
+    }
 }

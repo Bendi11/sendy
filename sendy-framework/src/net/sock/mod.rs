@@ -1,24 +1,11 @@
-use std::{
-    collections::HashMap,
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    sync::Arc,
-    time::Duration,
-};
-
-use tokio::{
-    net::UdpSocket,
-    sync::Mutex,
-};
-
-use self::{
-    recv::ReliableSocketRecv,
-};
-
-use super::packet::{ConnMessage, Message, PacketKind};
-
 mod recv;
 mod tx;
 mod packet;
+
+use std::time::Duration;
+
+pub(crate) use packet::PacketKind;
+pub use packet::{ToBytes, FromBytes};
 
 const MAX_IN_TRANSIT_MSG: usize = 5;
 const MAX_IN_TRANSIT_BLOCK: usize = 2;
