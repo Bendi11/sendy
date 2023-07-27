@@ -8,13 +8,16 @@ use crate::net::msg::MessageKind;
 pub(crate) const MAX_SAFE_UDP_PAYLOAD: usize = 500;
 
 /// The encoded size of a [PacketHeader] in bytes
-pub(crate) const HEADER_SZ: usize = 10;
+pub(crate) const HEADER_SZ: usize = 8;
+
+pub(in crate::net::sock) const CHECKSUM_OFFSET: usize = 4;
+pub(in crate::net::sock) const BLOCKID_OFFSET: usize = 2;
 
 /// The space available to a single packet for payload, after IP, UDP, and Sendy headers
 pub(crate) const BLOCK_SIZE: usize = MAX_SAFE_UDP_PAYLOAD - HEADER_SZ;
 
-/// A 10 byte packet header with packet identifiers, checksum, and packet kind markers
-#[derive(Clone, Copy, Debug)]
+/// An 8 byte packet header with packet identifiers, checksum, and packet kind markers
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PacketHeader {
     /// 1 byte representing the kind of packet this is, see [PacketKind] for usage
     pub kind: PacketKind,
@@ -24,7 +27,7 @@ pub(crate) struct PacketHeader {
     pub checksum: u32,
 }
 
-/// A unique identifier placed at the top of each UDP packet
+/// A 3 byte unique identifier placed at the top of each UDP packet
 ///
 /// Contains a message ID, identifying the message that this packet's payload is a part of,
 /// and a block id, identifying where in the receiver's message buffer the payload bytes should be
@@ -50,8 +53,9 @@ pub(crate) struct PacketId {
 ///  - The `blockid` field of a message packet should signal the total size of the incoming
 ///  message in MAX_BLOCK_SIZE blocks, and the payload is always copied to the message buffer at
 ///  offset 0
+#[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PacketKind {
+pub enum PacketKind {
     /// Used to establish a connection, using UDP tunneling both nodes must send CONN packets until
     /// they receive a corresponding ACK from the other node
     Conn = 0,
@@ -108,16 +112,16 @@ impl FromBytes for PacketId {
 
 impl ToBytes for PacketHeader {
     fn write<W: BufMut>(&self, mut buf: W) {
-        self.kind.write(buf);
-        self.id.write(buf);
+        self.kind.write(&mut buf);
+        self.id.write(&mut buf);
         buf.put_u32_le(self.checksum);
     }
 }
 
 impl FromBytes for PacketHeader {
     fn parse<R: Buf>(mut buf: R) -> Result<Self, std::io::Error> {
-        let kind = PacketKind::parse(buf)?;
-        let id = PacketId::parse(buf)?;
+        let kind = PacketKind::parse(&mut buf)?;
+        let id = PacketId::parse(&mut buf)?;
         let checksum = buf.get_u32_le();
 
         Ok(Self {
@@ -146,7 +150,7 @@ impl FromBytes for PacketKind {
             0 => Self::Conn,
             1 => Self::Ack,
             2 => Self::Transfer,
-            other => Self::Message(MessageKind::try_from(value)?),
+            other => Self::Message(MessageKind::try_from(other)?),
         })
     }
 }

@@ -1,3 +1,5 @@
+use bytes::BufMut;
+
 use super::sock::{PacketKind, ToBytes, FromBytes};
 
 
@@ -21,5 +23,26 @@ impl TryFrom<u8> for MessageKind {
             PacketKind::MSG_TAG_OFFSET => Self::Test,
             _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid message kind"))
         })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TestMessage(pub Vec<u8>);
+
+impl Message for TestMessage {
+    const KIND: PacketKind = PacketKind::Message(MessageKind::Test);
+}
+
+impl FromBytes for TestMessage {
+    fn parse<R: bytes::Buf>(rbuf: R) -> Result<Self, std::io::Error> {
+        let mut buf = vec![];
+        buf.put(rbuf);
+        Ok(Self(buf))
+    }
+}
+
+impl ToBytes for TestMessage {
+    fn write<W: bytes::BufMut>(&self, mut buf: W) {
+        buf.put_slice(&self.0[..]);
     }
 }

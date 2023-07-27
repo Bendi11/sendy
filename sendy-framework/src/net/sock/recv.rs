@@ -18,7 +18,7 @@ use super::{
     packet::{PacketHeader, PacketKind, ToBytes},
 };
 
-const MSG_QUEUE_LEN: usize = 16;
+/*const MSG_QUEUE_LEN: usize = 16;
 
 #[derive(Debug)]
 pub(crate) struct ReliableSocketRecv {
@@ -286,4 +286,4 @@ impl ReliableSocketRecvInternal {
         self.sock.send_to(&buf, &*self.addr).await?;
         Ok(())
     }
-}
+}*/
