@@ -57,9 +57,6 @@ pub(crate) struct PacketId {
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PacketKind {
-    /// Used to establish a connection, using UDP tunneling both nodes must send CONN packets until
-    /// they receive a corresponding ACK from the other node
-    Conn = 0,
     /// Used to signal that a packet identified by the [PacketId] of the header has been received
     Ack = 1,
     /// Signals that the following payload bytes are to be placed at the offset into the message
@@ -77,6 +74,14 @@ pub(crate) struct AckMessage;
 impl Message for AckMessage { const KIND: PacketKind = PacketKind::Ack; }
 impl FromBytes for AckMessage { fn parse<R: Buf>(_: R) -> Result<Self, std::io::Error> { Ok(Self) } }
 impl ToBytes for AckMessage { fn write<W: BufMut>(&self, _: W) { } }
+
+/// Unit struct that implements the [Message] trait with no payload, allowing the lower-level
+/// functions to send CONN packets with the same interface as other messages
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ConnMessage;
+impl Message for ConnMessage { const KIND: PacketKind = PacketKind::Message(MessageKind::Conn); }
+impl FromBytes for ConnMessage { fn parse<R: Buf>(_: R) -> Result<Self, std::io::Error> { Ok(Self) } }
+impl ToBytes for ConnMessage { fn write<W: BufMut>(&self, _: W) { } }
 
 impl PacketKind {
     /// The tag to be used for the message tag with the lowest ID in the
@@ -146,7 +151,7 @@ impl PacketKind {
     /// packets, see [PacketKind] for more
     pub const fn is_control(&self) -> bool {
         match self {
-            Self::Conn | Self::Ack => true,
+            Self::Ack => true,
             _ => false,
         }
     }
@@ -156,7 +161,6 @@ impl FromBytes for PacketKind {
     fn parse<B: Buf>(mut buf: B) -> Result<Self, std::io::Error> {
         let value = buf.get_u8();
         Ok(match value {
-            0 => Self::Conn,
             1 => Self::Ack,
             2 => Self::Transfer,
             other => Self::Message(MessageKind::try_from(other)?),
@@ -167,7 +171,6 @@ impl FromBytes for PacketKind {
 impl ToBytes for PacketKind {
     fn write<W: BufMut>(&self, mut buf: W) {
         let v = match self {
-            Self::Conn => 0,
             Self::Ack => 1,
             Self::Transfer => 2,
             Self::Message(msg) => *msg as u8,

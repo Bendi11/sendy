@@ -40,7 +40,8 @@ impl ReliableSocketCongestionControl {
 impl ReliableSocketInternal {
     /// Send a single message via UDP, splitting the message into as many packets as necessary to
     /// transmit
-    pub async fn send<M: Message>(&self, id: NonZeroU8, msg: M) -> std::io::Result<()> {
+    pub async fn send<M: Message>(&self, msg: M) -> std::io::Result<()> {
+        let id = self.next_message_id();
         let mut splitter = MessageSplitter::new(M::KIND, id);
         msg.write(&mut splitter);
         let mut pkts = splitter
@@ -142,6 +143,17 @@ impl ReliableSocketInternal {
         drop(permit);
 
         Ok(())
+    }
+    
+    /// Get the next message ID by incrementing the atomic ID counter
+    pub fn next_message_id(&self) -> NonZeroU8 {
+        //Ensure that the counter rolls over 0
+        if let Ok(v) = self.msgid.compare_exchange(u8::MAX, 1, Ordering::SeqCst, Ordering::Relaxed) {
+            NonZeroU8::new(v).expect("NoZeroU8 is 0?")
+        } else {
+            NonZeroU8::new(self.msgid.fetch_add(1, Ordering::SeqCst))
+                .expect("msgid counter reached 0")
+        }
     }
 }
 

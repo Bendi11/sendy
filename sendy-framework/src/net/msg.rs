@@ -8,6 +8,7 @@ use super::sock::{PacketKind, ToBytes, FromBytes};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MessageKind {
     Test = PacketKind::MSG_TAG_OFFSET,
+    Conn = PacketKind::MSG_TAG_OFFSET + 1,
 }
 
 /// A message that has been received from a remote peer, but has not yet been parsed to a message
@@ -29,8 +30,9 @@ impl TryFrom<u8> for MessageKind {
     type Error = std::io::Error;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        Ok(match value {
-            PacketKind::MSG_TAG_OFFSET => Self::Test,
+        Ok(match value.checked_sub(PacketKind::MSG_TAG_OFFSET) {
+            Some(0) => Self::Test,
+            Some(1) => Self::Conn,
             _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid message kind"))
         })
     }

@@ -1,6 +1,7 @@
 use std::{net::SocketAddrV4, time::Duration};
 
 use clap::Parser;
+use sendy_framework::net::{sock::{ReliableSocket, SocketConfig}, msg::TestMessage};
 
 /// Test UDP connection on local network
 #[derive(Parser, Debug)]
@@ -20,9 +21,13 @@ async fn main() {
 
     let args = Args::parse();
 
-    //let sock = ReliableSocket::tunnel_connect(args.addr).await.unwrap();
-    //sock.send(TestMessage { buf: String::from_utf8_lossy(&(0..1_000_000u32).map(|v| v.to_be_bytes()).flatten().collect::<Vec<u8>>()).into_owned() } ).await.unwrap();
-    //let (_, msg) = sock.recv().await;
+    let sock = ReliableSocket::new(SocketConfig::default(), args.addr.port(), *args.addr.ip()).await.unwrap();
+
+    sock.send(TestMessage(
+        (0..1_000_000u32).map(|v| v.to_be_bytes()[0]).collect::<Vec<u8>>()
+    )).await.unwrap();
+
+    sock.recv().await;
     //println!("Received: {}", String::from_utf8_lossy(&msg));
 
     tokio::time::sleep(Duration::from_secs(5)).await;
