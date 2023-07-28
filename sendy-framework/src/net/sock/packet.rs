@@ -12,6 +12,7 @@ pub(crate) const HEADER_SZ: usize = 8;
 
 pub(in crate::net::sock) const CHECKSUM_OFFSET: usize = 4;
 pub(in crate::net::sock) const BLOCKID_OFFSET: usize = 2;
+pub(in crate::net::sock) const MSGID_OFFSET: usize = 1;
 
 /// The space available to a single packet for payload, after IP, UDP, and Sendy headers
 pub(crate) const BLOCK_SIZE: usize = MAX_SAFE_UDP_PAYLOAD - HEADER_SZ;
@@ -32,7 +33,7 @@ pub(crate) struct PacketHeader {
 /// Contains a message ID, identifying the message that this packet's payload is a part of,
 /// and a block id, identifying where in the receiver's message buffer the payload bytes should be
 /// placed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PacketId {
     /// ID of the message, rolls over to 1 after passing 255 because
     /// 0 is reserved to mark invalid / not received packets
