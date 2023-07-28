@@ -22,6 +22,7 @@ async fn main() {
     let args = Args::parse();
 
     let sock = ReliableSocket::new(SocketConfig::default(), args.addr.port(), *args.addr.ip()).await.unwrap();
+    sock.tunnel().await.unwrap();
 
     sock.send(TestMessage(
         (0..1_000_000u32).map(|v| v.to_be_bytes()[0]).collect::<Vec<u8>>()
