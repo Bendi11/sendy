@@ -1,4 +1,4 @@
-use bytes::BufMut;
+use bytes::{BufMut, Bytes};
 
 use super::sock::{PacketKind, ToBytes, FromBytes};
 
@@ -8,6 +8,16 @@ use super::sock::{PacketKind, ToBytes, FromBytes};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MessageKind {
     Test = PacketKind::MSG_TAG_OFFSET,
+}
+
+/// A message that has been received from a remote peer, but has not yet been parsed to a message
+/// type
+#[derive(Clone, Debug)]
+pub struct ReceivedMessage {
+    /// Received message kind, used to instruct parsing
+    pub kind: MessageKind,
+    /// The payload of the message
+    pub bytes: Bytes,
 }
 
 /// Trait satisfied by all types that can be serialized to bytes and sent to other nodes

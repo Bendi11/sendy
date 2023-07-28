@@ -2,7 +2,7 @@ mod recv;
 mod tx;
 mod packet;
 
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::{sync::{atomic::AtomicUsize, Arc}, net::SocketAddr};
 
 use dashmap::DashMap;
 pub(crate) use packet::PacketKind;
@@ -35,6 +35,8 @@ pub struct ReliableSocket(Arc<ReliableSocketInternal>);
 pub(crate) struct ReliableSocketInternal {
     /// The underlying UDP socket to send and receive with
     sock: UdpSocket,
+    /// Address of the peer that this socket is connected to
+    remote: SocketAddr,
     /// Runtime-configurable options for performance and rate limiting
     cfg: SocketConfig,
     /// Map of currently-sent packet to their ack wakers

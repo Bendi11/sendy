@@ -1,4 +1,4 @@
-use std::num::NonZeroU8;
+use std::{num::NonZeroU8, fmt};
 
 use bytes::{BufMut, Buf};
 
@@ -165,5 +165,11 @@ impl ToBytes for PacketKind {
             Self::Message(msg) => *msg as u8,
         };
         buf.put_u8(v);
+    }
+}
+
+impl fmt::Display for PacketId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.msgid, self.blockid)
     }
 }

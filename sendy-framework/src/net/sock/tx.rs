@@ -32,10 +32,21 @@ impl ReliableSocketInternal {
     pub async fn send<M: Message>(self: Arc<Self>, id: NonZeroU8, msg: M) -> std::io::Result<()> {
         let mut splitter = MessageSplitter::new(M::KIND, id);
         msg.write(&mut splitter);
-        let pkts = splitter
+        let mut pkts = splitter
             .into_packet_iter()
-            .map(|(id, pkt)| self.send_wait_ack(id, pkt))
-            .collect::<Vec<_>>();
+            .map(|(id, pkt)| self.send_wait_ack(id, pkt));
+        
+        //Must send the first packet and wait for ack
+        match pkts.next() {
+            Some(first) => first.await,
+            None => {
+                log::error!("MessageSplitter did not produce a single packet for message {:?}", M::KIND);
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "MessageSplitter produced no packets"
+                ));
+            }
+        }
         
         futures::future::join_all(pkts).await;
         Ok(())
