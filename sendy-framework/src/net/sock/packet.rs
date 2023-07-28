@@ -2,7 +2,7 @@ use std::{num::NonZeroU8, fmt};
 
 use bytes::{BufMut, Buf};
 
-use crate::net::msg::MessageKind;
+use crate::net::msg::{MessageKind, Message};
 
 /// 'minimum maximum reassembly buffer size' guaranteed to be deliverable, minus IP and UDP headers
 pub(crate) const MAX_SAFE_UDP_PAYLOAD: usize = 500;
@@ -69,6 +69,14 @@ pub enum PacketKind {
     /// An application-level message packet
     Message(MessageKind),
 }
+
+/// Unit struct that implements the [Message] trait with no payload, allowing the lower-level
+/// functions to send ACK packets with the same interface as other messages
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AckMessage;
+impl Message for AckMessage { const KIND: PacketKind = PacketKind::Ack; }
+impl FromBytes for AckMessage { fn parse<R: Buf>(buf: R) -> Result<Self, std::io::Error> { Ok(Self) } }
+impl ToBytes for AckMessage { fn write<W: BufMut>(&self, buf: W) { } }
 
 impl PacketKind {
     /// The tag to be used for the message tag with the lowest ID in the

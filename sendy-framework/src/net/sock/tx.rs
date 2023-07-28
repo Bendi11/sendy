@@ -6,7 +6,7 @@ use tokio::sync::{Semaphore, Notify};
 
 use crate::net::msg::Message;
 
-use super::{ReliableSocketInternal, packet::{PacketId, HEADER_SZ, PacketHeader, BLOCK_SIZE, MAX_SAFE_UDP_PAYLOAD, CHECKSUM_OFFSET, BLOCKID_OFFSET}, ToBytes, PacketKind, FromBytes};
+use super::{ReliableSocketInternal, packet::{PacketId, HEADER_SZ, PacketHeader, BLOCK_SIZE, MAX_SAFE_UDP_PAYLOAD, CHECKSUM_OFFSET, BLOCKID_OFFSET}, ToBytes, PacketKind, FromBytes, SocketConfig};
 
 /// Sensitivity to the RTT measurement to new changes in the response time in 100ths of a ms
 pub(crate) const RTT_ESTIMATION_ALPHA: u32 = 50;
@@ -26,10 +26,21 @@ pub(crate) struct ReliableSocketCongestionControl {
     pub rtt: AtomicU32,
 }
 
+impl ReliableSocketCongestionControl {
+    pub fn new(cfg: &SocketConfig) -> Self {
+        Self {
+            permits: Semaphore::new(cfg.transmission_window_sz as usize),
+            permits_to_remove: AtomicU8::new(0),
+            window: AtomicU8::new(cfg.transmission_window_sz as u8),
+            rtt: AtomicU32::new(200),
+        }
+    }
+}
+
 impl ReliableSocketInternal {
     /// Send a single message via UDP, splitting the message into as many packets as necessary to
     /// transmit
-    pub async fn send<M: Message>(self: Arc<Self>, id: NonZeroU8, msg: M) -> std::io::Result<()> {
+    pub async fn send<M: Message>(&self, id: NonZeroU8, msg: M) -> std::io::Result<()> {
         let mut splitter = MessageSplitter::new(M::KIND, id);
         msg.write(&mut splitter);
         let mut pkts = splitter
@@ -103,7 +114,9 @@ impl ReliableSocketInternal {
     /// Send the given [Message] - this function performs NO message splitting, so the encoded
     /// size of `msg` MUST be less than BLOCK_SIZE - e.g. the message must
     /// be a control message (see [PacketKind](super::packet::PacketKind))
-    pub async fn send_single_raw<M: Message>(self: Arc<Self>, id: PacketId, msg: M) -> std::io::Result<()> {
+    pub async fn send_single_raw<M: Message>(&self, id: PacketId, msg: M) -> std::io::Result<()> {
+        let permit = self.congestion.permits.acquire().await.expect("Transmit permit semaphore closed");
+
         let encoded_sz = msg.size_hint();
         //allocate extra space in the packet buffer for the header
         let mut buf = BytesMut::with_capacity(msg.size_hint().unwrap_or(0) + HEADER_SZ);
@@ -124,7 +137,9 @@ impl ReliableSocketInternal {
 
         header.write(&mut buf[..HEADER_SZ]);
 
-        self.sock.send(&buf).await?;
+        self.sock.send_to(&buf, self.remote).await?;
+
+        drop(permit);
 
         Ok(())
     }

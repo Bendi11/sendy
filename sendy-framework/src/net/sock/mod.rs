@@ -9,7 +9,7 @@ pub(crate) use packet::PacketKind;
 pub use packet::{ToBytes, FromBytes};
 use tokio::{net::UdpSocket, sync::Notify};
 
-use self::{tx::ReliableSocketCongestionControl, packet::PacketId};
+use self::{tx::ReliableSocketCongestionControl, packet::PacketId, recv::ReliableSocketRecv};
 
 /// Configuration options for a socket connection
 #[derive(Debug)]
@@ -19,7 +19,7 @@ pub struct SocketConfig {
     /// Maximum bytes of memory to use when buffering received packets
     pub max_recv_mem: usize,
     /// Transmission window size in packets to start at
-    pub transmission_window_sz: usize,
+    pub transmission_window_sz: u8,
     /// Extra time beyond the estimated round trip time to wait for an ACK packet
     pub extra_wait_for_ack_ms: usize,
 }
@@ -27,8 +27,11 @@ pub struct SocketConfig {
 /// Wrapper over a UDP socket that is capable of UDP hole punching to connect to another peer, with
 /// a minimal reliability layer that guarantees messages are received in the order they are
 /// transmitted (unless they dropped for another reason - e.g. the message was too large to accomodate)
-#[derive(Clone, Debug)]
-pub struct ReliableSocket(Arc<ReliableSocketInternal>);
+#[derive(Debug)]
+pub struct ReliableSocket {
+    internal: Arc<ReliableSocketInternal>,
+    recvproc: tokio::task::JoinHandle<()>,
+}
 
 /// Internal state for the [ReliableSocket], wrapped in an [Arc]
 #[derive(Debug)]
@@ -43,4 +46,6 @@ pub(crate) struct ReliableSocketInternal {
     awaiting_ack: DashMap<PacketId, Arc<Notify>>,
     /// State governing the congestion control algorithm
     congestion: ReliableSocketCongestionControl,
+    /// Receiving arm of this socket
+    recv: ReliableSocketRecv,
 }

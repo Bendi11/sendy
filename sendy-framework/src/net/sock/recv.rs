@@ -1,42 +1,105 @@
-use std::{cell::OnceCell, sync::{Arc, atomic::AtomicUsize}};
+use std::{cell::OnceCell, num::NonZeroU8, sync::{Arc, atomic::AtomicU16, self}, cmp::Ordering};
 
-use bytes::BytesMut;
-use hibitset::AtomicBitSet;
-use tokio::{task::JoinHandle, sync::{Mutex, Semaphore, SemaphorePermit, OwnedSemaphorePermit, mpsc::Receiver, RwLock}};
+use bytes::{BytesMut, BufMut, Bytes};
+use futures::AsyncReadExt;
+use hibitset::{AtomicBitSet, BitSetLike};
+use tokio::{task::JoinHandle, sync::{Mutex, Semaphore, OwnedSemaphorePermit, mpsc::{Receiver, Sender, self}, RwLock}};
 
-use crate::net::{sock::{packet::{PacketHeader, HEADER_SZ}, FromBytes, PacketKind}, msg::ReceivedMessage};
+use crate::net::{sock::{packet::{PacketHeader, HEADER_SZ, BLOCK_SIZE}, FromBytes, PacketKind}, msg::{ReceivedMessage, MessageKind}};
 
-use super::{packet::MAX_SAFE_UDP_PAYLOAD, ReliableSocketInternal};
+use super::{packet::{MAX_SAFE_UDP_PAYLOAD, PacketId, AckMessage}, ReliableSocketInternal, SocketConfig};
 
 
 /// State required for a reliable socket's reception arm
+#[derive(Debug)]
 pub(crate) struct ReliableSocketRecv {
-    /// Background process that handles the reception of packets from the socket
-    pub recv_proc: OnceCell<JoinHandle<()>>,
     /// A queue of messages that have finished being received, values here are still tracked by
     /// `buffered_bytes` and should update `buffered_bytes` when removed
-    pub finished: Receiver<ReceivedMessage>,
+    pub finished: Mutex<Receiver<FinishedMessage>>,
+    /// Sender to transmit reassembled message buffers back to the main thread
+    pub txfinish: Sender<FinishedMessage>,
     /// A semaphore with [max_recv_mem](crate::net::sock::SocketConfig::max_recv_mem) permits
     /// available, one permit is equal to one byte
-    pub recv_buf_permit: Semaphore,
+    pub recv_buf_permit: Arc<Semaphore>,
     /// Messages that are not yet fully reassembled
     pub messages: RwLock<Vec<RecvMessage>>,
 }
 
-/// Message that is in the process of reception
-pub(crate) struct RecvMessage {
-    /// Permit that allows this message to exist
+/// A fully reassembled message, also containing a permit for the amount of memory it is using
+#[derive(Debug)]
+pub(crate) struct FinishedMessage {
     pub permit: OwnedSemaphorePermit,
+    pub msg: ReceivedMessage,
+}
+
+/// Message that is in the process of reception
+#[derive(Debug)]
+pub(crate) struct RecvMessage {
+    /// Permit that allows this message to use the amount of bytes it has allocated
+    pub permit: OwnedSemaphorePermit,
+    /// The type of packet that introduced this message
+    pub kind: MessageKind,
+    /// Message ID that was transmitted
+    pub msg_id: NonZeroU8,
     /// Blocks of the file that have been received
     pub blocks: Vec<Mutex<BytesMut>>,
     /// Bitset of all block IDs that have been received successfully
     pub indexes: AtomicBitSet,
     /// Expected length of the message in blocks
-    pub expected_blocks: u32,
+    pub expected_blocks: u16,
+    /// Received block count
+    pub received_blocks: AtomicU16,
 }
 
+impl ReliableSocketRecv {
+    /// Create and initialize all state needed to receive messages
+    ///
+    /// See also: [spawn_recv_thread](ReliableSocketInternal::spawn_recv_thread)
+    pub async fn new(cfg: &SocketConfig) -> Self {
+        let (txfinish, finished) = mpsc::channel(16);
+
+        Self {
+            finished: Mutex::new(finished),
+            txfinish,
+            messages: RwLock::new(Vec::with_capacity(8)),
+            recv_buf_permit: Arc::new(Semaphore::new(cfg.max_recv_mem)),
+        }
+    }
+}
 
 impl ReliableSocketInternal {
+    pub async fn spawn_recv_thread(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
+        tokio::task::spawn(async move {
+            loop {
+                let mut buf = [0u8 ; MAX_SAFE_UDP_PAYLOAD];
+                match self.sock.recv(&mut buf).await {
+                    Ok(read) => {
+                        let this = self.clone();
+                        tokio::task::spawn(this.handle_pkt(read, buf));
+                    },
+                    Err(e) => {
+                        log::error!("Failed to receive from UDP socket: {}", e);
+                    }
+                }
+            }
+        })
+    }
+}
+
+impl ReliableSocketInternal {
+    /// Wait for a message to be fully reassembled and sent from the receiver threat
+    pub async fn recv(&self) -> ReceivedMessage {
+        if let Some(next) = self.recv.finished.lock().await.recv().await {
+            //Return the permit tracking buffer space used
+            drop(next.permit);
+            next.msg
+        } else {
+            panic!("Message receiver channel closed");
+        }
+    }
+    
+    /// Handle a packet received via UDP, reassembling the buffer, starting new message receptions,
+    /// and sending ACKs when needed
     async fn handle_pkt(
         self: Arc<Self>,
         received_bytes: usize,
@@ -58,8 +121,7 @@ impl ReliableSocketInternal {
                     self.awaiting_ack.remove(&header.id);
                 }
             } else {
-                self.sendack(header.msgid, header.blockid).await;
-                //self.finishmsg(header.kind, Vec::new()).await;
+                self.send_ack(header.id).await;
             }
 
             return
@@ -72,234 +134,166 @@ impl ReliableSocketInternal {
             return
         }
 
-        let (blockid, mut buffer) = match header.kind {
-            //Transfer data to existing buffer
-            PacketKind::Transfer => (
-                header.blockid,
-                match recv
-                    .iter_mut()
-                    .find(|m| m.id.map(|id| id.get() == header.msgid).unwrap_or(false))
-                {
-                    Some(buf) => buf,
-                    None => {
-                        log::warn!(
-                            "{}: Transfer packet received for nonexistent message {}",
-                            self.addr,
-                            header.msgid,
-                        );
+        if let PacketKind::Message(kind) = header.kind {
+            // We already received the new message packet
+            if 
+                self
+                .recv
+                .messages
+                .read()
+                .await
+                .iter()
+                .any(|m| m.msg_id == header.id.msgid)
+            {
+                self.send_ack(header.id).await;
+                return
+            }
 
-                        self.sendack(header.msgid, header.blockid).await?;
+            let expected_blocks = header.id.blockid;
+            let size_estimation = expected_blocks as usize * BLOCK_SIZE;
+            if size_estimation > self.cfg.max_recv_mem {
+                log::error!(
+                    "{}: Received message introduction packet that specifies {}B, but only have space for {}B",
+                    self.remote,
+                    size_estimation,
+                    self.cfg.max_recv_mem,
+                );
 
-                        return Ok(());
-                    }
-                },
-            ),
-            //Beginning a new message
-            new_msg => {
-                // We already received the new message packet
-                if recv
-                    .iter()
-                    .any(|m| m.id.map(|id| id.get() == header.msgid).unwrap_or(false))
-                {
-                    self.sendack(header.msgid, header.blockid).await?;
-                    return Ok(());
+                return
+            }
+
+            let permit = self
+                .recv
+                .recv_buf_permit
+                .clone()
+                .acquire_many_owned(size_estimation as u32)
+                .await
+                .expect("Receive permits semaphore closed");
+            
+            //Fill a Vec with contiguous chunks of a buffer that can be individually locked
+            let mut blocks = Vec::with_capacity(expected_blocks as usize);
+            let mut tmp_buf = BytesMut::with_capacity(size_estimation);
+            for _ in 0..expected_blocks {
+                let rest = tmp_buf.split_off(BLOCK_SIZE);
+                blocks.push(Mutex::new(tmp_buf));
+                tmp_buf = rest;
+            }
+
+            let slot = RecvMessage {
+                permit,
+                kind,
+                msg_id: header.id.msgid,
+                blocks,
+                indexes: AtomicBitSet::new(),
+                expected_blocks,
+                received_blocks: AtomicU16::new(0),
+            };
+            
+            let mut messages = self.recv.messages.write().await;
+            messages.push(slot);
+        }
+        
+        let messages = self.recv.messages.read().await;
+        let (idx, msg, mut buffer) = match messages
+            .iter()
+            .enumerate()
+            .find(|(_, m)| m.msg_id == header.id.msgid)
+        {
+            Some((idx, msg)) => {
+                if header.id.blockid < msg.expected_blocks {
+                    (idx, msg, msg.blocks[header.id.blockid as usize].lock().await)
+                } else {
+                    log::error!(
+                        "{}: Received transfer packet with {} with block id out of range of expected {}",
+                        self.remote,
+                        header.id,
+                        msg.expected_blocks,
+                    );
+                    
+                    return
                 }
+            },
+            None => {
+                log::warn!(
+                    "{}: Transfer packet received for nonexistent message {}",
+                    self.remote,
+                    header.id,
+                );
 
-                let open_slot = match recv.iter_mut().find(|m| m.id.is_none()) {
-                    Some(slot) => slot,
-                    None => {
-                        log::error!(
-                            "{}: Received new message packet but have no open buffer spaces",
-                            self.addr
-                        );
-                        return Ok(());
-                    }
-                };
+                self.send_ack(header.id).await;
 
-                open_slot.id = Some(match NonZeroU8::new(header.msgid) {
-                    Some(id) => id,
-                    None => {
-                        log::error!(
-                            "{}: Received new message packet with invalid message id {}",
-                            self.addr,
-                            header.msgid,
-                        );
-
-                        return Ok(());
-                    }
-                });
-                open_slot.kind = new_msg;
-                open_slot.msg_len = header.blockid;
-                open_slot.recvd_bytes = 0;
-                open_slot.data.clear();
-                open_slot
-                    .data
-                    .extend(std::iter::repeat(0u8).take(header.blockid as usize * BLOCK_SIZE));
-                open_slot.recvd_blocks.clear();
-
-                (0, open_slot)
+                return
             }
         };
 
         //Already received packet
-        if buffer.recvd_blocks.contains(blockid) {
-            self.sendack(header.msgid, header.blockid).await?;
-            return Ok(());
+        if msg.indexes.contains(header.id.blockid as u32) {
+            self.send_ack(header.id).await;
+            return
         }
 
         let block_data_len = received_bytes - HEADER_SZ;
 
         if block_data_len > 0 {
-            buffer.recvd_bytes += block_data_len as u32;
-            (&mut buffer.data[blockid as usize * BLOCK_SIZE..][..block_data_len])
-                .copy_from_slice(blockbuf);
-            buffer.recvd_blocks.add(header.blockid);
+            buffer.put_slice(blockbuf);
+            msg.indexes.add_atomic(header.id.blockid as u32);
+            msg.received_blocks.fetch_add(1, sync::atomic::Ordering::SeqCst);
         }
 
-        self.sendack(header.msgid, header.blockid).await?;
-
-        let recv_block_count = buffer.recvd_blocks.clone().iter().count();
-        match recv_block_count.cmp(&(buffer.msg_len as usize)) {
+        self.send_ack(header.id).await;
+        
+        let received_blocks_count = msg.received_blocks.load(sync::atomic::Ordering::SeqCst);
+        match received_blocks_count.cmp(&msg.expected_blocks) {
             Ordering::Equal => {
-                self.finishmsg(&mut buffer)
-                    .await;
-                buffer.id = None;
+                let mut finished = self.recv.messages.write().await.swap_remove(idx);
+
+                let bytes = if finished.blocks.len() > 0 {
+                    let first_block = finished.blocks.swap_remove(0).into_inner();
+
+                    let reassemble = finished
+                        .blocks
+                        .into_iter()
+                        .fold(first_block, |mut acc, block| {
+                            acc.unsplit(block.into_inner());
+                            acc
+                        });
+
+                    reassemble.freeze()
+                } else {
+                    Bytes::new()
+                };
+                
+                let _ = self.recv.txfinish.send(FinishedMessage {
+                    permit: finished.permit,
+                    msg: ReceivedMessage {
+                        kind: finished.kind,
+                        bytes,
+                    }
+                }).await;
             }
             Ordering::Greater => {
                 log::warn!(
                     "{}: Received {} blocks but expecting only {} - message dropped",
-                    self.addr, 
-                    recv_block_count,
-                    buffer.msg_len
+                    self.remote, 
+                    received_blocks_count,
+                    msg.expected_blocks,
                 );
-                buffer.id = None;
             }
             Ordering::Less => (),
         }
-
-        Ok(())
     }
-
-}
-
-/*const MSG_QUEUE_LEN: usize = 16;
-
-#[derive(Debug)]
-pub(crate) struct ReliableSocketRecv {
-    handle: JoinHandle<Result<(), std::io::Error>>,
-    msg: Mutex<Receiver<(PacketKind, Vec<u8>)>>,
-}
-
-impl Drop for ReliableSocketRecv {
-    fn drop(&mut self) {
-        self.handle.abort();
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct ReliableSocketRecvInternal {
-    ack_chan: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>,
-    sock: Arc<UdpSocket>,
-    recv: Mutex<[RecvMessage; MAX_IN_TRANSIT_MSG]>,
-    msg: Sender<(PacketKind, Vec<u8>)>,
-    addr: Arc<SocketAddr>,
-}
-
-#[derive(Debug, Clone)]
-struct RecvMessage {
-    pub id: Option<NonZeroU8>,
-    pub data: Vec<u8>,
-    pub recvd_blocks: BitSet,
-    pub msg_len: u32,
-    pub recvd_bytes: u32,
-    pub kind: PacketKind,
-}
-
-impl Default for RecvMessage {
-    fn default() -> Self {
-        Self {
-            id: None,
-            data: vec![],
-            recvd_blocks: BitSet::new(),
-            msg_len: 0,
-            recvd_bytes: 0,
-            kind: PacketKind::Ack,
+        
+    /// Send an ACK packet to the remote peer, logging any error that occurs when transmitting the
+    /// packet
+    ///
+    /// Note that this function *WILL* wait for a permit from the congestion controller to transmit
+    async fn send_ack(&self, id: PacketId) {
+        if let Err(e) = self.send_single_raw(id, AckMessage).await {
+            log::error!(
+                "{}: Failed to send ACK packet: {}",
+                self.remote,
+                e,
+            );
         }
     }
 }
-
-impl ReliableSocketRecv {
-    pub(crate) fn new(
-        addr: Arc<SocketAddr>,
-        ack: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>,
-        sock: Arc<UdpSocket>,
-    ) -> Self {
-        let (tx, rx) = tokio::sync::mpsc::channel(MSG_QUEUE_LEN);
-
-        let internal = Arc::new(ReliableSocketRecvInternal::new(addr, ack, sock, tx));
-        let handle = tokio::task::spawn(internal.recv());
-
-        Self { handle, msg: rx.into() }
-    }
-
-    pub(crate) async fn recv(&self) -> (PacketKind, Vec<u8>) {
-        match self.msg.lock().await.recv().await {
-            Some(msg) => msg,
-            None => {
-                log::error!("Channel between recv and main thread closed");
-                panic!();
-            }
-        }
-    }
-}
-
-impl ReliableSocketRecvInternal {
-    pub(crate) fn new(
-        addr: Arc<SocketAddr>,
-        ack: Arc<Mutex<HashMap<AckNotification, Arc<Notify>>>>,
-        sock: Arc<UdpSocket>,
-        msg: Sender<(PacketKind, Vec<u8>)>,
-    ) -> Self {
-        Self {
-            ack_chan: ack,
-            sock,
-            recv: Mutex::new(std::array::from_fn(|_| Default::default())),
-            msg,
-            addr,
-        }
-    }
-
-    async fn finishmsg(&self, msg: &mut RecvMessage) {
-        let mut vec = std::mem::take(&mut msg.data); 
-        vec.truncate(msg.recvd_bytes as usize);
-        if let Err(e) = self.msg.send((msg.kind, vec)).await {
-            log::error!("Failed to send received message to main thread: {}", e);
-        }
-    }
-
-    
-    pub(crate) async fn recv(self: Arc<Self>) -> Result<(), std::io::Error> {
-        loop {
-            let mut buf = [0u8; MAX_PACKET_SZ];
-            let received_bytes = self.clone().sock.recv(&mut buf).await?;
-            tokio::task::spawn(self.clone().handle_pkt(received_bytes, buf));
-        }
-    }
-
-    async fn sendack(&self, msgid: u8, blockid: u32) -> Result<(), std::io::Error> {
-        self.sendraw(&PacketHeader {
-            kind: PacketKind::Ack,
-            msgid,
-            blockid,
-            checksum: 0,
-        })
-        .await
-    }
-
-    async fn sendraw<P: ToBytes>(&self, pl: &P) -> Result<(), std::io::Error> {
-        let mut buf = Vec::new();
-        pl.write(&mut buf)?;
-        self.sock.send_to(&buf, &*self.addr).await?;
-        Ok(())
-    }
-}*/
