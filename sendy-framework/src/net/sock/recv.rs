@@ -55,7 +55,7 @@ impl ReliableSocketRecv {
     /// Create and initialize all state needed to receive messages
     ///
     /// See also: [spawn_recv_thread](ReliableSocketInternal::spawn_recv_thread)
-    pub async fn new(cfg: &SocketConfig) -> Self {
+    pub fn new(cfg: &SocketConfig) -> Self {
         let (txfinish, finished) = mpsc::channel(16);
 
         Self {

@@ -75,8 +75,8 @@ pub enum PacketKind {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AckMessage;
 impl Message for AckMessage { const KIND: PacketKind = PacketKind::Ack; }
-impl FromBytes for AckMessage { fn parse<R: Buf>(buf: R) -> Result<Self, std::io::Error> { Ok(Self) } }
-impl ToBytes for AckMessage { fn write<W: BufMut>(&self, buf: W) { } }
+impl FromBytes for AckMessage { fn parse<R: Buf>(_: R) -> Result<Self, std::io::Error> { Ok(Self) } }
+impl ToBytes for AckMessage { fn write<W: BufMut>(&self, _: W) { } }
 
 impl PacketKind {
     /// The tag to be used for the message tag with the lowest ID in the

@@ -2,7 +2,7 @@ mod recv;
 mod tx;
 mod packet;
 
-use std::{sync::{atomic::AtomicUsize, Arc}, net::SocketAddr};
+use std::{sync::{atomic::AtomicUsize, Arc}, net::{SocketAddr, SocketAddrV4, Ipv4Addr}};
 
 use dashmap::DashMap;
 pub(crate) use packet::PacketKind;
@@ -48,4 +48,30 @@ pub(crate) struct ReliableSocketInternal {
     congestion: ReliableSocketCongestionControl,
     /// Receiving arm of this socket
     recv: ReliableSocketRecv,
+}
+
+impl ReliableSocket {
+    /// Create a new socket that is not connected to any remote peer
+    pub async fn new(cfg: SocketConfig, port: u16) -> std::io::Result<Self> {
+        let sock = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)).await?;
+        let remote = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port));
+        let congestion = ReliableSocketCongestionControl::new(&cfg);
+        let recv = ReliableSocketRecv::new(&cfg);
+
+        let internal = Arc::new(ReliableSocketInternal {
+            sock,
+            remote,
+            cfg,
+            awaiting_ack: DashMap::new(),
+            congestion,
+            recv,
+        });
+
+        let recvproc = internal.clone().spawn_recv_thread().await;
+
+        Ok(Self {
+            internal,
+            recvproc,
+        })
+    }
 }
