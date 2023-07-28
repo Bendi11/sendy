@@ -15,13 +15,13 @@ use self::{tx::ReliableSocketCongestionControl, packet::PacketId};
 #[derive(Debug)]
 pub struct SocketConfig {
     /// The maximum messages to buffer on the receiving end
-    pub max_msg_in_transit: AtomicUsize,
-    /// Maximum size of a message in blocks to accept reception of
-    pub max_blocks: AtomicUsize,
+    pub max_msg_in_transit: usize,
+    /// Maximum bytes of memory to use when buffering received packets
+    pub max_recv_mem: usize,
     /// Transmission window size in packets to start at
-    pub transmission_window_sz: AtomicUsize,
+    pub transmission_window_sz: usize,
     /// Extra time beyond the estimated round trip time to wait for an ACK packet
-    pub extra_wait_for_ack_ms: AtomicUsize,
+    pub extra_wait_for_ack_ms: usize,
 }
 
 /// Wrapper over a UDP socket that is capable of UDP hole punching to connect to another peer, with

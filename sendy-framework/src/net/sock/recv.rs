@@ -1,10 +1,10 @@
-use std::{cell::OnceCell, sync::Arc};
+use std::{cell::OnceCell, sync::{Arc, atomic::AtomicUsize}};
 
-use bytes::{BufMut, BytesMut};
-use hibitset::{BitSet, AtomicBitSet};
-use tokio::{task::JoinHandle, sync::{Mutex, Semaphore, SemaphorePermit, OwnedSemaphorePermit}};
+use bytes::BytesMut;
+use hibitset::AtomicBitSet;
+use tokio::{task::JoinHandle, sync::{Mutex, Semaphore, SemaphorePermit, OwnedSemaphorePermit, mpsc::Receiver, RwLock}};
 
-use crate::net::sock::{packet::{PacketHeader, HEADER_SZ}, FromBytes, PacketKind};
+use crate::net::{sock::{packet::{PacketHeader, HEADER_SZ}, FromBytes, PacketKind}, msg::ReceivedMessage};
 
 use super::{packet::MAX_SAFE_UDP_PAYLOAD, ReliableSocketInternal};
 
@@ -13,7 +13,14 @@ use super::{packet::MAX_SAFE_UDP_PAYLOAD, ReliableSocketInternal};
 pub(crate) struct ReliableSocketRecv {
     /// Background process that handles the reception of packets from the socket
     pub recv_proc: OnceCell<JoinHandle<()>>,
-    pub messages: Vec<RecvMessage>,
+    /// A queue of messages that have finished being received, values here are still tracked by
+    /// `buffered_bytes` and should update `buffered_bytes` when removed
+    pub finished: Receiver<ReceivedMessage>,
+    /// A semaphore with [max_recv_mem](crate::net::sock::SocketConfig::max_recv_mem) permits
+    /// available, one permit is equal to one byte
+    pub recv_buf_permit: Semaphore,
+    /// Messages that are not yet fully reassembled
+    pub messages: RwLock<Vec<RecvMessage>>,
 }
 
 /// Message that is in the process of reception
@@ -28,13 +35,6 @@ pub(crate) struct RecvMessage {
     pub expected_blocks: u32,
 }
 
-/// A collection of messages that are currently being received, with semaphore permits given as
-/// permission to add an item to a new slot
-struct RecvMessageSlots {
-    /// Governor of the message slots that may be used
-    permits: Semaphore,
-    slots:  
-}
 
 impl ReliableSocketInternal {
     async fn handle_pkt(

@@ -66,7 +66,7 @@ impl ReliableSocketInternal {
                 send_time = Instant::now();
                 tokio::time::sleep(
                     Duration::from_millis(
-                        self.cfg.extra_wait_for_ack_ms.load(Ordering::SeqCst) as u64 +
+                        self.cfg.extra_wait_for_ack_ms as u64 +
                         self.congestion.rtt.load(Ordering::SeqCst) as u64
                     )
                 ).await;
