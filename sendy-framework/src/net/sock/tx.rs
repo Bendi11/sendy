@@ -49,7 +49,7 @@ struct MessageSplitter {
 }
 
 impl MessageSplitter {
-    /// Create a new `MessageSplitter` with the given message kind and ID
+    /// Create a new `MessageSplitter` for the given message kind and ID
     pub fn new(kind: PacketKind, msgid: NonZeroU8) -> Self {
         let mut me = Self {
             msgid,
@@ -64,16 +64,14 @@ impl MessageSplitter {
     
     /// Return an iterator over the produced packet bytes
     pub fn into_packet_iter(&mut self) -> impl Iterator<Item = &[u8]> {
+        //Write the number of packets to follow in the first packet's blockid field
+        (&mut self.buf[BLOCKID_OFFSET..]).put_u16_le(self.blockid);
         self
             .buf
             .chunks_mut(MAX_SAFE_UDP_PAYLOAD)
-            .enumerate()
-            .map(|(idx, pkt)| {
+            .map(|pkt| {
                 let checksum = crc32fast::hash(&pkt[HEADER_SZ..]);
                 (&mut pkt[CHECKSUM_OFFSET..]).put_u32_le(checksum);
-                if idx == 0 {
-                    (&mut pkt[BLOCKID_OFFSET..]).put_u16_le(self.blockid);
-                }
                 &pkt[..]
             })
     }
@@ -102,15 +100,13 @@ unsafe impl BufMut for MessageSplitter {
 
     unsafe fn advance_mut(&mut self, mut cnt: usize) {
         while cnt >= self.bytes_till_split {
-            println!("split with {} left, advance {}", self.bytes_till_split, cnt);
             self.buf.advance_mut(self.bytes_till_split);
-            cnt -= self.bytes_till_split;
             self.split(PacketKind::Transfer);
+            cnt -= self.bytes_till_split;
             self.bytes_till_split = BLOCK_SIZE;
         }
 
         self.bytes_till_split -= cnt;
-        println!("{} left", self.bytes_till_split);
 
         self.buf.advance_mut(cnt);
     }
@@ -126,8 +122,9 @@ mod tests {
     fn test_message_splitter() {
         const TEST_LEN: usize = 1000;
         let msgid = NonZeroU8::new(50).unwrap();
+        let payload = (0..TEST_LEN).map(|v| v.to_le_bytes()[0]).collect::<Vec<u8>>();
         let mut splitter = MessageSplitter::new(PacketKind::Message(MessageKind::Test), msgid);
-        let packet = TestMessage((0..TEST_LEN).map(|v| v.to_le_bytes()[0]).collect::<Vec<u8>>());
+        let packet = TestMessage(payload.clone());
 
         packet.write(&mut splitter);
 
@@ -138,8 +135,7 @@ mod tests {
             TEST_LEN / BLOCK_SIZE + if TEST_LEN % BLOCK_SIZE != 0 { 1 } else { 0 }
         );
         
-        let chk1 = (0..BLOCK_SIZE).map(|v| v.to_le_bytes()[0]).collect::<Vec<u8>>();
-        let chk1 = crc32fast::hash(&chk1);
+        let chk1 = crc32fast::hash(&payload[..BLOCK_SIZE]);
         assert_eq!(
             PacketHeader::parse(packets[0]).unwrap(),
             PacketHeader {
