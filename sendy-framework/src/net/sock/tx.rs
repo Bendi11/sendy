@@ -116,8 +116,6 @@ impl ReliableSocketInternal {
     /// size of `msg` MUST be less than BLOCK_SIZE - e.g. the message must
     /// be a control message (see [PacketKind](super::packet::PacketKind))
     pub async fn send_single_raw<M: Message>(&self, id: PacketId, msg: M) -> std::io::Result<()> {
-        let permit = self.congestion.permits.acquire().await.expect("Transmit permit semaphore closed");
-
         let encoded_sz = msg.size_hint();
         //allocate extra space in the packet buffer for the header
         let mut buf = BytesMut::with_capacity(msg.size_hint().unwrap_or(0) + HEADER_SZ);
@@ -126,7 +124,8 @@ impl ReliableSocketInternal {
         let checksum = if encoded_sz == Some(0) {
             0
         } else {
-            msg.write(&mut buf[HEADER_SZ..]);
+            buf.put_slice(&[0u8 ; HEADER_SZ]);
+            msg.write(&mut buf);
             crc32fast::hash(&buf[HEADER_SZ..])
         };
         
@@ -139,8 +138,6 @@ impl ReliableSocketInternal {
         header.write(&mut buf[..HEADER_SZ]);
 
         self.sock.send_to(&buf, self.remote).await?;
-
-        drop(permit);
 
         Ok(())
     }

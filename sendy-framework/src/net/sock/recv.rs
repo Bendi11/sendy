@@ -134,7 +134,8 @@ impl ReliableSocketInternal {
             return
         }
 
-        if let PacketKind::Message(kind) = header.kind {
+        //Modify the blockid if the packet begins a new message
+        let true_blockid = if let PacketKind::Message(kind) = header.kind {
             // We already received the new message packet
             if 
                 self
@@ -191,7 +192,11 @@ impl ReliableSocketInternal {
             
             let mut messages = self.recv.messages.write().await;
             messages.push(slot);
-        }
+            
+            0
+        } else {
+            header.id.blockid
+        };
         
         let messages = self.recv.messages.read().await;
         let (idx, msg, mut buffer) = match messages
@@ -200,11 +205,11 @@ impl ReliableSocketInternal {
             .find(|(_, m)| m.msg_id == header.id.msgid)
         {
             Some((idx, msg)) => {
-                if header.id.blockid < msg.expected_blocks {
-                    (idx, msg, msg.blocks[header.id.blockid as usize].lock().await)
+                if true_blockid < msg.expected_blocks {
+                    (idx, msg, msg.blocks[true_blockid as usize].lock().await)
                 } else {
                     log::error!(
-                        "{}: Received transfer packet with {} with block id out of range of expected {}",
+                        "{}: Received packet with {} with block id out of range of expected {}",
                         self.remote,
                         header.id,
                         msg.expected_blocks,
@@ -227,7 +232,7 @@ impl ReliableSocketInternal {
         };
 
         //Already received packet
-        if msg.indexes.contains(header.id.blockid as u32) {
+        if msg.indexes.contains(true_blockid as u32) {
             self.send_ack(header.id).await;
             return
         }
@@ -236,7 +241,7 @@ impl ReliableSocketInternal {
 
         if block_data_len > 0 {
             buffer.put_slice(blockbuf);
-            msg.indexes.add_atomic(header.id.blockid as u32);
+            msg.indexes.add_atomic(true_blockid as u32);
             msg.received_blocks.fetch_add(1, sync::atomic::Ordering::SeqCst);
         }
 
@@ -285,8 +290,6 @@ impl ReliableSocketInternal {
         
     /// Send an ACK packet to the remote peer, logging any error that occurs when transmitting the
     /// packet
-    ///
-    /// Note that this function *WILL* wait for a permit from the congestion controller to transmit
     async fn send_ack(&self, id: PacketId) {
         if let Err(e) = self.send_single_raw(id, AckMessage).await {
             log::error!(
