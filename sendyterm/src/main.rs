@@ -29,7 +29,6 @@ async fn main() {
     )).await.unwrap();
 
     let msg = sock.recv().await;
-    println!("Received: {}", String::from_utf8_lossy(&msg.bytes));
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 }

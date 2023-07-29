@@ -46,7 +46,7 @@ impl ReliableSocketInternal {
         let mut pkts = splitter
             .into_packet_iter()
             .map(|(id, pkt)| self.send_wait_ack(id, pkt));
-        
+
         //Must send the first packet and wait for ack
         match pkts.next() {
             Some(first) => first.await?,
@@ -86,9 +86,8 @@ impl ReliableSocketInternal {
                     )
                 ).await;
 
-                //tokio::task::yield_now().await;
                 let old_window = self.congestion.window.load(Ordering::SeqCst);
-                let window = (old_window * 10) / 20;
+                let window = old_window / 2;
                 
                 if window > 0 {
                     if let Ok(_) = self.congestion.window.compare_exchange(old_window, window, Ordering::SeqCst, Ordering::Relaxed) {
@@ -107,7 +106,6 @@ impl ReliableSocketInternal {
                         permit.forget();
                     }
                 }
-
 
                 self.congestion.window.fetch_add(1, Ordering::SeqCst);
                 self.congestion.permits.add_permits(1);
