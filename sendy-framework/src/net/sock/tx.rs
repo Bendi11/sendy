@@ -1,4 +1,4 @@
-use std::{sync::{Arc, atomic::{AtomicU8, Ordering, AtomicU32}}, num::NonZeroU8, time::{UNIX_EPOCH, Instant, Duration}};
+use std::{sync::{Arc, atomic::{AtomicU8, Ordering, AtomicU32}}, num::NonZeroU8, time::{Instant, Duration}};
 
 use bytes::{BytesMut, BufMut, buf::UninitSlice};
 use tokio::sync::{Semaphore, Notify};
@@ -7,8 +7,8 @@ use crate::net::msg::Message;
 
 use super::{ReliableSocketInternal, packet::{PacketId, HEADER_SZ, PacketHeader, BLOCK_SIZE, MAX_SAFE_UDP_PAYLOAD, CHECKSUM_OFFSET, BLOCKID_OFFSET}, ToBytes, PacketKind, FromBytes, SocketConfig};
 
-/// Sensitivity to the RTT measurement to new changes in the response time in 100ths of a ms
-pub(crate) const RTT_ESTIMATION_ALPHA: u32 = 50;
+/// Sensitivity to the RTT measurement to new changes in the response time in 10ths of a ms
+pub(crate) const RTT_ESTIMATION_ALPHA: u32 = 5;
 
 /// State needed to limit the number of packets sent at any time, with state needed for
 /// transmitting threads to block until a permit is available to send
@@ -77,7 +77,6 @@ impl ReliableSocketInternal {
 
         let resend = async {
             loop {
-                log::trace!("SEND {} {} to {}", id, pkt.len(), self.remote);
                 self.sock.send_to(pkt, self.remote).await?;
                 send_time = Instant::now();
                 tokio::time::sleep(
@@ -87,12 +86,14 @@ impl ReliableSocketInternal {
                     )
                 ).await;
 
-                tokio::task::yield_now().await;
+                //tokio::task::yield_now().await;
                 let old_window = self.congestion.window.load(Ordering::SeqCst);
-                let window = old_window / 2;
+                let window = (old_window * 10) / 20;
                 
-                if let Ok(_) = self.congestion.window.compare_exchange(old_window, window, Ordering::SeqCst, Ordering::Relaxed) {
-                    self.congestion.permits_to_remove.fetch_add(window, Ordering::SeqCst);
+                if window > 0 {
+                    if let Ok(_) = self.congestion.window.compare_exchange(old_window, window, Ordering::SeqCst, Ordering::Relaxed) {
+                        self.congestion.permits_to_remove.fetch_add(window, Ordering::SeqCst);
+                    }
                 }
             }
         };
@@ -104,11 +105,18 @@ impl ReliableSocketInternal {
                 if to_remove > 0 {
                     if let Ok(_) = self.congestion.permits_to_remove.compare_exchange(to_remove, to_remove - 1, Ordering::SeqCst, Ordering::Relaxed) {
                         permit.forget();
-                        log::info!("Permit removed");
                     }
-                } else {
-                    self.congestion.permits.add_permits(1);
                 }
+
+
+                self.congestion.window.fetch_add(1, Ordering::SeqCst);
+                self.congestion.permits.add_permits(1);
+                
+                let rtt_measure = send_time.elapsed().as_millis() as u32;
+                let old_rtt = self.congestion.rtt.load(Ordering::Relaxed);
+                let new_rtt = ((RTT_ESTIMATION_ALPHA * 100) * old_rtt + (10 - RTT_ESTIMATION_ALPHA) * (rtt_measure * 100)) / 1000;
+                let _ = self.congestion.rtt.compare_exchange(old_rtt, new_rtt, Ordering::SeqCst, Ordering::Relaxed);
+
 
                 Ok(())
             },
@@ -144,7 +152,6 @@ impl ReliableSocketInternal {
 
         header.write(&mut buf[..HEADER_SZ]);
         
-        println!("SENT ACK {}: {}", id, buf.len());
         self.sock.send_to(&buf, self.remote).await?;
 
         Ok(())

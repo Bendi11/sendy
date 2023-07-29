@@ -11,7 +11,7 @@ use tokio::{net::UdpSocket, sync::Notify};
 
 use self::{tx::ReliableSocketCongestionControl, packet::{PacketId, ConnMessage}, recv::ReliableSocketRecv};
 
-use super::msg::{Message, ReceivedMessage, MessageKind};
+use super::msg::{Message, ReceivedMessage};
 
 /// Configuration options for a socket connection
 #[derive(Debug)]
@@ -103,7 +103,7 @@ impl Default for SocketConfig {
         Self {
             max_recv_mem: 20_000_000,
             transmission_window_sz: 4,
-            extra_wait_for_ack_ms: 500,
+            extra_wait_for_ack_ms: 250,
         }
     }
 }

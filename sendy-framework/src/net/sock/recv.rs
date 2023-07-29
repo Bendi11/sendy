@@ -119,9 +119,7 @@ impl ReliableSocketInternal {
                 if let Some(not) = self.awaiting_ack.get(&header.id) {
                     not.notify_waiters();
                     drop(not);
-                    println!("RMEOVE");
                     self.awaiting_ack.remove(&header.id);
-                    println!("REMOVE");
                 }
             } else {
                 self.send_ack(header.id).await;
@@ -210,7 +208,7 @@ impl ReliableSocketInternal {
             .map(|(idx, msg)| (idx, msg)) {
             Some((idx, msg)) => (idx, msg),
             None => {
-                log::warn!(
+                log::trace!(
                     "{}: Transfer packet received for nonexistent message {}",
                     self.remote,
                     header.id,
@@ -260,8 +258,6 @@ impl ReliableSocketInternal {
                     Bytes::new()
                 };
 
-                log::trace!("Finished");
-                
                 if let Err(e) = self.recv.txfinish.send(FinishedMessage {
                     permit: finished.permit,
                     msg: ReceivedMessage {

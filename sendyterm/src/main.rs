@@ -15,7 +15,7 @@ pub struct Args {
 #[tokio::main]
 async fn main() {
     stderrlog::new()
-        .verbosity(log::LevelFilter::Trace)
+        .verbosity(log::LevelFilter::Warn)
         .init()
         .unwrap();
 
@@ -25,7 +25,7 @@ async fn main() {
     sock.tunnel().await.unwrap();
 
     sock.send(TestMessage(
-        (0..1_000_000u32).map(|v| v.to_be_bytes()[0]).collect::<Vec<u8>>()
+        (0..19_000_000u32).map(|v| v.to_le_bytes()[0]).collect::<Vec<u8>>()
     )).await.unwrap();
 
     let msg = sock.recv().await;
