@@ -79,8 +79,7 @@ impl ReliableSocketInternal {
         let resend = async {
             loop {
                 log::trace!("SEND {} {} to {}", id, pkt.len(), self.remote);
-                let written = self.sock.send_to(pkt, self.remote).await?;
-                log::trace!("DONE: {}", written);
+                self.sock.send_to(pkt, self.remote).await?;
                 send_time = Instant::now();
                 tokio::time::sleep(
                     Duration::from_millis(

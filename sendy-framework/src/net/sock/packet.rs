@@ -57,6 +57,8 @@ pub(crate) struct PacketId {
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PacketKind {
+    /// Used to connect to other nodes with hole punching
+    Conn = 0,
     /// Used to signal that a packet identified by the [PacketId] of the header has been received
     Ack = 1,
     /// Signals that the following payload bytes are to be placed at the offset into the message
@@ -79,7 +81,7 @@ impl ToBytes for AckMessage { fn write<W: BufMut>(&self, _: W) { } }
 /// functions to send CONN packets with the same interface as other messages
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ConnMessage;
-impl Message for ConnMessage { const KIND: PacketKind = PacketKind::Message(MessageKind::Conn); }
+impl Message for ConnMessage { const KIND: PacketKind = PacketKind::Conn; }
 impl FromBytes for ConnMessage { fn parse<R: Buf>(_: R) -> Result<Self, std::io::Error> { Ok(Self) } }
 impl ToBytes for ConnMessage { fn write<W: BufMut>(&self, _: W) { } }
 
@@ -151,7 +153,7 @@ impl PacketKind {
     /// packets, see [PacketKind] for more
     pub const fn is_control(&self) -> bool {
         match self {
-            Self::Ack => true,
+            Self::Conn | Self::Ack => true,
             _ => false,
         }
     }
@@ -171,6 +173,7 @@ impl FromBytes for PacketKind {
 impl ToBytes for PacketKind {
     fn write<W: BufMut>(&self, mut buf: W) {
         let v = match self {
+            Self::Conn => 0,
             Self::Ack => 1,
             Self::Transfer => 2,
             Self::Message(msg) => *msg as u8,

@@ -2,7 +2,7 @@ mod recv;
 mod tx;
 mod packet;
 
-use std::{sync::{atomic::{AtomicUsize, AtomicU8}, Arc}, net::{SocketAddr, SocketAddrV4, Ipv4Addr}};
+use std::{sync::{atomic::AtomicU8, Arc}, net::{SocketAddr, SocketAddrV4, Ipv4Addr}};
 
 use dashmap::DashMap;
 pub(crate) use packet::PacketKind;
@@ -79,8 +79,7 @@ impl ReliableSocket {
     }
 
     pub async fn tunnel(&self) -> std::io::Result<()> {
-        self.send(ConnMessage).await?;
-        while self.recv().await.kind != MessageKind::Conn {}
+        self.send(ConnMessage).await?; 
 
         Ok(())
     }
