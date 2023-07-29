@@ -163,6 +163,7 @@ impl FromBytes for PacketKind {
     fn parse<B: Buf>(mut buf: B) -> Result<Self, std::io::Error> {
         let value = buf.get_u8();
         Ok(match value {
+            0 => Self::Conn,
             1 => Self::Ack,
             2 => Self::Transfer,
             other => Self::Message(MessageKind::try_from(other)?),
