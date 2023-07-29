@@ -1,14 +1,14 @@
 use std::{num::NonZeroU8, sync::{Arc, atomic::AtomicU16, self}, cmp::Ordering};
 
-use bytes::{BytesMut, BufMut, Bytes};
-use hibitset::{AtomicBitSet, BitSetLike};
-use parking_lot::{Mutex, RwLock};
-use tokio::sync::{Semaphore, OwnedSemaphorePermit, mpsc::{Receiver, Sender, self}};
+use bytes::{BytesMut, Bytes, BufMut};
+use hibitset::AtomicBitSet;
+use parking_lot::Mutex;
+use slab::Slab;
+use tokio::sync::{Semaphore, OwnedSemaphorePermit, RwLock, mpsc::{Receiver, Sender, self}};
 
 use crate::net::{sock::{packet::{PacketHeader, HEADER_SZ, BLOCK_SIZE}, FromBytes, PacketKind}, msg::{ReceivedMessage, MessageKind}};
 
 use super::{packet::{MAX_SAFE_UDP_PAYLOAD, PacketId, AckMessage}, ReliableSocketInternal, SocketConfig};
-
 
 /// State required for a reliable socket's reception arm
 #[derive(Debug)]
@@ -22,7 +22,7 @@ pub(crate) struct ReliableSocketRecv {
     /// available, one permit is equal to one byte
     pub recv_buf_permit: Arc<Semaphore>,
     /// Messages that are not yet fully reassembled
-    pub messages: RwLock<Vec<Arc<RecvMessage>>>,
+    pub messages: RwLock<Slab<RecvMessage>>,
 }
 
 /// A fully reassembled message, also containing a permit for the amount of memory it is using
@@ -61,7 +61,7 @@ impl ReliableSocketRecv {
         Self {
             finished: Mutex::new(finished),
             txfinish,
-            messages: RwLock::new(Vec::with_capacity(8)),
+            messages: RwLock::new(Slab::with_capacity(8)),
             recv_buf_permit: Arc::new(Semaphore::new(cfg.max_recv_mem)),
         }
     }
@@ -135,103 +135,93 @@ impl ReliableSocketInternal {
             return
         }
 
-        //Modify the blockid if the packet begins a new message
-        let true_blockid = if let PacketKind::Message(kind) = header.kind {
-            // We already received the new message packet
-            if 
-                self
-                .recv
-                .messages
-                .read()
+        
+        let messages = self.recv.messages.read().await;
+        let (idx, msg, blockid) = match header.kind {
+            PacketKind::Message(kind) => {
+                // We already received the new message packet
+                if 
+                    self
+                    .recv
+                    .messages
+                    .read()
+                    .await
+                    .iter()
+                    .any(|(_, m)| m.msg_id == header.id.msgid)
+                {
+                    self.send_ack(header.id).await;
+                    return
+                }
+
+                let expected_blocks = header.id.blockid;
+                let size_estimation = expected_blocks as usize * BLOCK_SIZE;
+                if size_estimation > self.cfg.max_recv_mem {
+                    log::error!(
+                        "{}: Received message introduction packet that specifies {}B, but only have space for {}B",
+                        self.remote,
+                        size_estimation,
+                        self.cfg.max_recv_mem,
+                    );
+
+                    return
+                }
+                
+                let permit = self
+                    .recv
+                    .recv_buf_permit
+                    .clone()
+                    .acquire_many_owned(size_estimation as u32)
+                    .await
+                    .expect("Receive permits semaphore closed");
+                
+                //Fill a Vec with contiguous chunks of a buffer that can be individually locked
+                let mut blocks = Vec::with_capacity(expected_blocks as usize);
+                let mut tmp_buf = BytesMut::with_capacity(size_estimation);
+                for _ in 0..expected_blocks {
+                    let rest = tmp_buf.split_off(BLOCK_SIZE);
+                    blocks.push(Mutex::new(tmp_buf));
+                    tmp_buf = rest;
+                }
+
+                let slot = RecvMessage {
+                    permit,
+                    kind,
+                    msg_id: header.id.msgid,
+                    blocks,
+                    indexes: AtomicBitSet::new(),
+                    expected_blocks,
+                    received_blocks: AtomicU16::new(0),
+                };
+                
+                let id = {
+                    let mut messages = self.recv.messages.write().await;
+                    messages.insert(slot)
+                };
+
+                (id, &messages[id], 0)
+            },
+            PacketKind::Transfer => match messages
                 .iter()
-                .any(|m| m.msg_id == header.id.msgid)
-            {
-                self.send_ack(header.id).await;
-                return
-            }
+                .find(|(_, m)| m.msg_id == header.id.msgid)
+                .map(|(idx, msg)| (idx, msg)) {
+                    Some((idx, msg)) => (idx, msg, header.id.blockid),
+                    None => {
+                        log::warn!(
+                            "{}: Transfer packet received for nonexistent message {}",
+                            self.remote,
+                            header.id,
+                        );
 
-            let expected_blocks = header.id.blockid;
-            let size_estimation = expected_blocks as usize * BLOCK_SIZE;
-            if size_estimation > self.cfg.max_recv_mem {
-                log::error!(
-                    "{}: Received message introduction packet that specifies {}B, but only have space for {}B",
-                    self.remote,
-                    size_estimation,
-                    self.cfg.max_recv_mem,
-                );
+                        self.send_ack(header.id).await;
 
-                return
-            }
-            
-            log::trace!("Getting permit");
-            let permit = self
-                .recv
-                .recv_buf_permit
-                .clone()
-                .acquire_many_owned(size_estimation as u32)
-                .await
-                .expect("Receive permits semaphore closed");
-
-            log::trace!("MINE");
-            
-            //Fill a Vec with contiguous chunks of a buffer that can be individually locked
-            let mut blocks = Vec::with_capacity(expected_blocks as usize);
-            let mut tmp_buf = BytesMut::with_capacity(size_estimation);
-            for _ in 0..expected_blocks {
-                let rest = tmp_buf.split_off(BLOCK_SIZE);
-                blocks.push(Mutex::new(tmp_buf));
-                tmp_buf = rest;
-            }
-
-            let slot = RecvMessage {
-                permit,
-                kind,
-                msg_id: header.id.msgid,
-                blocks,
-                indexes: AtomicBitSet::new(),
-                expected_blocks,
-                received_blocks: AtomicU16::new(0),
-            };
-            
-            {
-                let mut messages = self.recv.messages.write();
-                messages.push(Arc::new(slot));
-            }
-            
-            0
-        } else {
-            header.id.blockid
-        };
-        
-        let messages = Vec::<RecvMessage>::new();//self.recv.messages.read();
-        
-
-        let (idx, msg) = if let Some((idx, msg)) = messages.iter().enumerate().find(|(_, m)| m.msg_id == header.id.msgid) {
-            if true_blockid < msg.expected_blocks {
-                (idx, msg)
-            } else {
-                log::error!(
-                    "{}: Received packet with {} with block id out of range of expected {}",
-                    self.remote,
-                    header.id,
-                    msg.expected_blocks,
-                );
-                return
-            }
-        } else {
-            log::warn!(
-                "{}: Transfer packet received for nonexistent message {}",
-                self.remote,
-                header.id,
-            );
-
-            self.send_ack(header.id).await;
-
-            return
+                        return
+                    }
+                },
+            other => unreachable!("Unexpected packet type {:?}", other),
         };
 
         //Already received packet
-        if msg.indexes.contains(true_blockid as u32) {
+        if msg.indexes.contains(blockid as u32) {
             self.send_ack(header.id).await;
             return
         }
@@ -239,8 +229,8 @@ impl ReliableSocketInternal {
         let block_data_len = received_bytes - HEADER_SZ;
 
         if block_data_len > 0 {
-            msg.blocks[true_blockid as usize].lock().put_slice(blockbuf);
-            msg.indexes.add_atomic(true_blockid as u32);
+            msg.blocks[blockid as usize].lock().put_slice(blockbuf);
+            msg.indexes.add_atomic(blockid as u32);
             msg.received_blocks.fetch_add(1, sync::atomic::Ordering::SeqCst);
         }
         
@@ -249,37 +239,36 @@ impl ReliableSocketInternal {
         let received_blocks_count = msg.received_blocks.load(sync::atomic::Ordering::SeqCst);
         match received_blocks_count.cmp(&msg.expected_blocks) {
             Ordering::Equal => {
-                let finished = self.recv.messages.write().swap_remove(idx);
-                if let Some(mut finished) = Arc::into_inner(finished) {
-                    let bytes = if finished.blocks.len() > 0 {
-                        let first_block = finished.blocks.swap_remove(0).into_inner();
+                drop(messages);
+                let mut finished = self.recv.messages.write().await.remove(idx);
+                
+                let bytes = if finished.blocks.len() > 0 {
+                    let first_block = finished.blocks.swap_remove(0).into_inner();
 
-                        let reassemble = finished
-                            .blocks
-                            .into_iter()
-                            .fold(first_block, |mut acc, block| {
-                                acc.unsplit(block.into_inner());
-                                acc
-                            });
+                    let reassemble = finished
+                        .blocks
+                        .into_iter()
+                        .fold(first_block, |mut acc, block| {
+                            acc.unsplit(block.into_inner());
+                            acc
+                        });
 
-                        reassemble.freeze()
-                    } else {
-                        Bytes::new()
-                    };
-
-                    println!("Finished");
-                    
-                    let _ = self.recv.txfinish.send(FinishedMessage {
-                        permit: finished.permit,
-                        msg: ReceivedMessage {
-                            kind: finished.kind,
-                            bytes,
-                        }
-                    }).await;
+                    reassemble.freeze()
                 } else {
-                    log::error!("Attempted to finish message while another thread referenced the message");
-                }
+                    Bytes::new()
+                };
 
+                log::trace!("Finished");
+                
+                if let Err(e) = self.recv.txfinish.send(FinishedMessage {
+                    permit: finished.permit,
+                    msg: ReceivedMessage {
+                        kind: finished.kind,
+                        bytes,
+                    }
+                }).await {
+                    log::error!("Failed to send reassembled message to queue: {}", e);
+                }
             }
             Ordering::Greater => {
                 log::warn!(

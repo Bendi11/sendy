@@ -1,7 +1,6 @@
 use std::{sync::{Arc, atomic::{AtomicU8, Ordering, AtomicU32}}, num::NonZeroU8, time::{UNIX_EPOCH, Instant, Duration}};
 
 use bytes::{BytesMut, BufMut, buf::UninitSlice};
-use futures::stream::FuturesUnordered;
 use tokio::sync::{Semaphore, Notify};
 
 use crate::net::msg::Message;
@@ -107,9 +106,9 @@ impl ReliableSocketInternal {
                         permit.forget();
                         log::info!("Permit removed");
                     }
+                } else {
+                    self.congestion.permits.add_permits(1);
                 }
-
-                self.congestion.permits.add_permits(1);
 
                 Ok(())
             },

@@ -28,8 +28,8 @@ async fn main() {
         (0..1_000_000u32).map(|v| v.to_be_bytes()[0]).collect::<Vec<u8>>()
     )).await.unwrap();
 
-    sock.recv().await;
-    //println!("Received: {}", String::from_utf8_lossy(&msg));
+    let msg = sock.recv().await;
+    println!("Received: {}", String::from_utf8_lossy(&msg.bytes));
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 }
