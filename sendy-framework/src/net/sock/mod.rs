@@ -10,7 +10,7 @@ use std::{
 use dashmap::DashMap;
 pub(crate) use packet::PacketKind;
 pub use packet::{FromBytes, ToBytes};
-use tokio::{net::UdpSocket, sync::Notify};
+use tokio::{net::UdpSocket, sync::{Notify, mpsc::Receiver}};
 
 use self::{
     packet::{ConnMessage, PacketId},
@@ -45,35 +45,38 @@ pub struct ReliableSocket {
 pub(crate) struct ReliableSocketInternal {
     /// The underlying UDP socket to send and receive with
     sock: UdpSocket,
-    /// Address of the peer that this socket is connected to
-    remote: SocketAddr,
     /// Runtime-configurable options for performance and rate limiting
     cfg: SocketConfig,
-    /// Map of currently-sent packet to their ack wakers
+    /// Map of currently sent packets to their ack wakers
     awaiting_ack: DashMap<PacketId, Arc<Notify>>,
-    /// Counter used to create new message IDs
-    msgid: AtomicU8,
-    /// State governing the congestion control algorithm
-    congestion: ReliableSocketCongestionControl,
     /// Receiving arm of this socket
     recv: ReliableSocketRecv,
 }
 
+/// State maintained for each connection to a remote peer
+#[derive(Debug)]
+pub(crate) struct ReliableSocketConnectionInternal {
+    /// Counter used to create IDs for transmitted messages
+    msgid: AtomicU8,
+    /// Address and port of the remote peer
+    remote: SocketAddr,
+    /// Channel that fully reassembled messages are sent to
+    recv: Receiver<ReceivedMessage>,
+    /// Congestion control to limit the number of messages that may be sent
+    congestion: ReliableSocketCongestionControl,
+}
+
+
 impl ReliableSocket {
     /// Create a new socket that is not connected to any remote peer
-    pub async fn new(cfg: SocketConfig, port: u16, peer: Ipv4Addr) -> std::io::Result<Self> {
+    pub async fn new(cfg: SocketConfig, port: u16) -> std::io::Result<Self> {
         let sock = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)).await?;
-        let remote = SocketAddr::V4(SocketAddrV4::new(peer, port));
-        let congestion = ReliableSocketCongestionControl::new(&cfg);
         let recv = ReliableSocketRecv::new(&cfg);
 
         let internal = Arc::new(ReliableSocketInternal {
             sock,
-            remote,
             cfg,
             awaiting_ack: DashMap::new(),
-            msgid: AtomicU8::new(1),
-            congestion,
             recv,
         });
 

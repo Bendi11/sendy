@@ -17,7 +17,7 @@ use super::{
         PacketHeader, PacketId, BLOCKID_OFFSET, BLOCK_SIZE, CHECKSUM_OFFSET, HEADER_SZ,
         MAX_SAFE_UDP_PAYLOAD,
     },
-    FromBytes, PacketKind, ReliableSocketInternal, SocketConfig, ToBytes,
+    FromBytes, PacketKind, ReliableSocketInternal, SocketConfig, ToBytes, ReliableSocketConnectionInternal,
 };
 
 /// Sensitivity to the RTT measurement to new changes in the response time in 10ths of a ms
@@ -52,7 +52,7 @@ impl ReliableSocketCongestionControl {
 impl ReliableSocketInternal {
     /// Send a single message via UDP, splitting the message into as many packets as necessary to
     /// transmit
-    pub async fn send<M: Message>(&self, msg: M) -> std::io::Result<()> {
+    pub async fn send<M: Message>(&self, conn: &ReliableSocketConnectionInternal, msg: M) -> std::io::Result<()> {
         let id = self.next_message_id();
         let mut splitter = MessageSplitter::new(M::KIND, id);
         msg.write(&mut splitter);
