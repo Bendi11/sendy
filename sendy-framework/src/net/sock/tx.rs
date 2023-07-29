@@ -50,7 +50,7 @@ impl ReliableSocketInternal {
         
         //Must send the first packet and wait for ack
         match pkts.next() {
-            Some(first) => first.await,
+            Some(first) => first.await?,
             None => {
                 log::error!("MessageSplitter did not produce a single packet for message {:?}", M::KIND);
                 return Err(std::io::Error::new(
@@ -60,12 +60,16 @@ impl ReliableSocketInternal {
             }
         }
         
-        futures::future::join_all(pkts).await;
+        let results = futures::future::join_all(pkts).await;
+        for res in results {
+            res?
+        };
+
         Ok(())
     }
     
     /// Repeatedly send the given packet via UDP while waiting for an ACK packet in response
-    async fn send_wait_ack(&self, id: PacketId, pkt: &[u8]) {
+    async fn send_wait_ack(&self, id: PacketId, pkt: &[u8]) -> std::io::Result<()> {
         let permit = self.congestion.permits.acquire().await.expect("Transmit permit semaphore closed");
         let wait_ack = Arc::new(Notify::new());
         self.awaiting_ack.insert(id, wait_ack.clone());
@@ -74,8 +78,9 @@ impl ReliableSocketInternal {
 
         let resend = async {
             loop {
-                println!("SEND {} {}", id, pkt.len());
-                self.sock.send_to(pkt, self.remote).await;
+                log::trace!("SEND {} {} to {}", id, pkt.len(), self.remote);
+                let written = self.sock.send_to(pkt, self.remote).await?;
+                log::trace!("DONE: {}", written);
                 send_time = Instant::now();
                 tokio::time::sleep(
                     Duration::from_millis(
@@ -105,10 +110,13 @@ impl ReliableSocketInternal {
                     }
                 }
 
-                self.congestion.permits.add_permits(1);   
+                self.congestion.permits.add_permits(1);
+
+                Ok(())
             },
             std::io::Result::<()>::Err(e) = resend => {
                 log::error!("I/O error when transmitting {:?}: {}", id, e);
+                Err(e)
             }
         }
     }

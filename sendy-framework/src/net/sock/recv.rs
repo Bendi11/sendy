@@ -1,10 +1,9 @@
-use std::{cell::OnceCell, num::NonZeroU8, sync::{Arc, atomic::AtomicU16, self}, cmp::Ordering};
+use std::{num::NonZeroU8, sync::{Arc, atomic::AtomicU16, self}, cmp::Ordering};
 
 use bytes::{BytesMut, BufMut, Bytes};
-use futures::AsyncReadExt;
 use hibitset::{AtomicBitSet, BitSetLike};
 use parking_lot::{Mutex, RwLock};
-use tokio::{task::JoinHandle, sync::{Semaphore, OwnedSemaphorePermit, mpsc::{Receiver, Sender, self}}};
+use tokio::sync::{Semaphore, OwnedSemaphorePermit, mpsc::{Receiver, Sender, self}};
 
 use crate::net::{sock::{packet::{PacketHeader, HEADER_SZ, BLOCK_SIZE}, FromBytes, PacketKind}, msg::{ReceivedMessage, MessageKind}};
 
@@ -73,10 +72,10 @@ impl ReliableSocketInternal {
         tokio::task::spawn(async move {
             loop {
                 let mut buf = [0u8 ; MAX_SAFE_UDP_PAYLOAD];
-                match self.sock.recv(&mut buf).await {
-                    Ok(read) => {
+                match self.sock.recv_from(&mut buf).await {
+                    Ok((read, _)) => {
                         let this = self.clone();
-                        tokio::task::spawn(this.handle_pkt(read, buf));
+                        this.handle_pkt(read, buf).await;
                     },
                     Err(e) => {
                         log::error!("Failed to receive from UDP socket: {}", e);
@@ -119,6 +118,7 @@ impl ReliableSocketInternal {
             if header.kind == PacketKind::Ack {
                 if let Some(not) = self.awaiting_ack.get(&header.id) {
                     not.notify_waiters();
+                    drop(not);
                     self.awaiting_ack.remove(&header.id);
                 }
             } else {
@@ -244,7 +244,6 @@ impl ReliableSocketInternal {
             msg.received_blocks.fetch_add(1, sync::atomic::Ordering::SeqCst);
         }
         
-        println!("ACK");
         self.send_ack(header.id).await;
         
         let received_blocks_count = msg.received_blocks.load(sync::atomic::Ordering::SeqCst);
