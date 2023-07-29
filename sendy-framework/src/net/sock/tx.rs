@@ -1,11 +1,24 @@
-use std::{sync::{Arc, atomic::{AtomicU8, Ordering, AtomicU32}}, num::NonZeroU8, time::{Instant, Duration}};
+use std::{
+    num::NonZeroU8,
+    sync::{
+        atomic::{AtomicU32, AtomicU8, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 
-use bytes::{BytesMut, BufMut, buf::UninitSlice};
-use tokio::sync::{Semaphore, Notify};
+use bytes::{buf::UninitSlice, BufMut, BytesMut};
+use tokio::sync::{Notify, Semaphore};
 
 use crate::net::msg::Message;
 
-use super::{ReliableSocketInternal, packet::{PacketId, HEADER_SZ, PacketHeader, BLOCK_SIZE, MAX_SAFE_UDP_PAYLOAD, CHECKSUM_OFFSET, BLOCKID_OFFSET}, ToBytes, PacketKind, FromBytes, SocketConfig};
+use super::{
+    packet::{
+        PacketHeader, PacketId, BLOCKID_OFFSET, BLOCK_SIZE, CHECKSUM_OFFSET, HEADER_SZ,
+        MAX_SAFE_UDP_PAYLOAD,
+    },
+    FromBytes, PacketKind, ReliableSocketInternal, SocketConfig, ToBytes,
+};
 
 /// Sensitivity to the RTT measurement to new changes in the response time in 10ths of a ms
 pub(crate) const RTT_ESTIMATION_ALPHA: u32 = 5;
@@ -51,25 +64,33 @@ impl ReliableSocketInternal {
         match pkts.next() {
             Some(first) => first.await?,
             None => {
-                log::error!("MessageSplitter did not produce a single packet for message {:?}", M::KIND);
+                log::error!(
+                    "MessageSplitter did not produce a single packet for message {:?}",
+                    M::KIND
+                );
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "MessageSplitter produced no packets"
+                    "MessageSplitter produced no packets",
                 ));
             }
         }
-        
+
         let results = futures::future::join_all(pkts).await;
         for res in results {
             res?
-        };
+        }
 
         Ok(())
     }
-    
+
     /// Repeatedly send the given packet via UDP while waiting for an ACK packet in response
     async fn send_wait_ack(&self, id: PacketId, pkt: &[u8]) -> std::io::Result<()> {
-        let permit = self.congestion.permits.acquire().await.expect("Transmit permit semaphore closed");
+        let permit = self
+            .congestion
+            .permits
+            .acquire()
+            .await
+            .expect("Transmit permit semaphore closed");
         let wait_ack = Arc::new(Notify::new());
         self.awaiting_ack.insert(id, wait_ack.clone());
 
@@ -79,24 +100,29 @@ impl ReliableSocketInternal {
             loop {
                 self.sock.send_to(pkt, self.remote).await?;
                 send_time = Instant::now();
-                tokio::time::sleep(
-                    Duration::from_millis(
-                        self.cfg.extra_wait_for_ack_ms as u64 +
-                        self.congestion.rtt.load(Ordering::SeqCst) as u64
-                    )
-                ).await;
+                tokio::time::sleep(Duration::from_millis(
+                    self.cfg.extra_wait_for_ack_ms as u64
+                        + self.congestion.rtt.load(Ordering::SeqCst) as u64,
+                ))
+                .await;
 
                 let old_window = self.congestion.window.load(Ordering::SeqCst);
                 let window = old_window / 2;
-                
+
                 if window > 0 {
-                    if let Ok(_) = self.congestion.window.compare_exchange(old_window, window, Ordering::SeqCst, Ordering::Relaxed) {
-                        self.congestion.permits_to_remove.fetch_add(window, Ordering::SeqCst);
+                    if let Ok(_) = self.congestion.window.compare_exchange(
+                        old_window,
+                        window,
+                        Ordering::SeqCst,
+                        Ordering::Relaxed,
+                    ) {
+                        self.congestion
+                            .permits_to_remove
+                            .fetch_add(window, Ordering::SeqCst);
                     }
                 }
             }
         };
-
 
         tokio::select! {
             _ = wait_ack.notified() => {
@@ -109,7 +135,7 @@ impl ReliableSocketInternal {
 
                 self.congestion.window.fetch_add(1, Ordering::SeqCst);
                 self.congestion.permits.add_permits(1);
-                
+
                 let rtt_measure = send_time.elapsed().as_millis() as u32;
                 let old_rtt = self.congestion.rtt.load(Ordering::Relaxed);
                 let new_rtt = ((RTT_ESTIMATION_ALPHA * 100) * old_rtt + (10 - RTT_ESTIMATION_ALPHA) * (rtt_measure * 100)) / 1000;
@@ -132,16 +158,16 @@ impl ReliableSocketInternal {
         let encoded_sz = msg.size_hint();
         //allocate extra space in the packet buffer for the header
         let mut buf = BytesMut::with_capacity(msg.size_hint().unwrap_or(0) + HEADER_SZ);
-        
+
         //Don't waste time writing nothing and calculating the checksum if there is no payload
         let checksum = if encoded_sz == Some(0) {
             0
         } else {
-            buf.put_slice(&[0u8 ; HEADER_SZ]);
+            buf.put_slice(&[0u8; HEADER_SZ]);
             msg.write(&mut buf);
             crc32fast::hash(&buf[HEADER_SZ..])
         };
-        
+
         let header = PacketHeader {
             kind: M::KIND,
             id,
@@ -149,16 +175,19 @@ impl ReliableSocketInternal {
         };
 
         header.write(&mut buf[..HEADER_SZ]);
-        
+
         self.sock.send_to(&buf, self.remote).await?;
 
         Ok(())
     }
-    
+
     /// Get the next message ID by incrementing the atomic ID counter
     pub fn next_message_id(&self) -> NonZeroU8 {
         //Ensure that the counter rolls over 0
-        if let Ok(v) = self.msgid.compare_exchange(u8::MAX, 1, Ordering::SeqCst, Ordering::Relaxed) {
+        if let Ok(v) = self
+            .msgid
+            .compare_exchange(u8::MAX, 1, Ordering::SeqCst, Ordering::Relaxed)
+        {
             NonZeroU8::new(v).expect("NoZeroU8 is 0?")
         } else {
             NonZeroU8::new(self.msgid.fetch_add(1, Ordering::SeqCst))
@@ -183,34 +212,35 @@ impl MessageSplitter {
             msgid,
             blockid: 0,
             bytes_till_split: BLOCK_SIZE,
-            buf: BytesMut::new()
+            buf: BytesMut::new(),
         };
-        
+
         me.split(kind);
         me
     }
-    
+
     /// Return an iterator over the produced packet windows, each slice will begin with a packet
     /// header and end with a payload segment between 0 and BLOCK_SIZE bytes long
     pub fn into_packet_iter(&mut self) -> impl Iterator<Item = (PacketId, &[u8])> {
         //Write the number of packets to follow in the first packet's blockid field
         (&mut self.buf[BLOCKID_OFFSET..]).put_u16_le(self.blockid);
-        self
-            .buf
-            .chunks_mut(MAX_SAFE_UDP_PAYLOAD)
-            .map(|pkt| {
-                let checksum = crc32fast::hash(&pkt[HEADER_SZ..]);
-                (&mut pkt[CHECKSUM_OFFSET..]).put_u32_le(checksum);
-                let id = PacketId::parse(&pkt[1..]).expect("MessageSplitter produced invalid packet id");
-                (id, &pkt[..])
-            })
+        self.buf.chunks_mut(MAX_SAFE_UDP_PAYLOAD).map(|pkt| {
+            let checksum = crc32fast::hash(&pkt[HEADER_SZ..]);
+            (&mut pkt[CHECKSUM_OFFSET..]).put_u32_le(checksum);
+            let id =
+                PacketId::parse(&pkt[1..]).expect("MessageSplitter produced invalid packet id");
+            (id, &pkt[..])
+        })
     }
 
     /// Write a new packet header to the buffer
     fn split(&mut self, kind: PacketKind) {
         let header = PacketHeader {
             kind,
-            id: PacketId { msgid: self.msgid, blockid: self.blockid },
+            id: PacketId {
+                msgid: self.msgid,
+                blockid: self.blockid,
+            },
             //Checksum is a placeholder until the full packet is written
             checksum: 0,
         };
@@ -221,7 +251,9 @@ impl MessageSplitter {
 }
 
 unsafe impl BufMut for MessageSplitter {
-    fn remaining_mut(&self) -> usize { self.buf.remaining_mut() }
+    fn remaining_mut(&self) -> usize {
+        self.buf.remaining_mut()
+    }
 
     fn chunk_mut<'a>(&'a mut self) -> &'a mut UninitSlice {
         let remaining = self.buf.chunk_mut().len();
@@ -244,15 +276,20 @@ unsafe impl BufMut for MessageSplitter {
 
 #[cfg(test)]
 mod tests {
-    use crate::net::{msg::{TestMessage, MessageKind}, sock::FromBytes};
+    use crate::net::{
+        msg::{MessageKind, TestMessage},
+        sock::FromBytes,
+    };
 
     use super::*;
-    
+
     #[test]
     fn test_message_splitter() {
         const TEST_LEN: usize = 1000;
         let msgid = NonZeroU8::new(50).unwrap();
-        let payload = (0..TEST_LEN).map(|v| v.to_le_bytes()[0]).collect::<Vec<u8>>();
+        let payload = (0..TEST_LEN)
+            .map(|v| v.to_le_bytes()[0])
+            .collect::<Vec<u8>>();
         let mut splitter = MessageSplitter::new(PacketKind::Message(MessageKind::Test), msgid);
         let packet = TestMessage(payload.clone());
 
@@ -264,13 +301,16 @@ mod tests {
             packets.len(),
             TEST_LEN / BLOCK_SIZE + if TEST_LEN % BLOCK_SIZE != 0 { 1 } else { 0 }
         );
-        
+
         let chk1 = crc32fast::hash(&payload[..BLOCK_SIZE]);
         assert_eq!(
             PacketHeader::parse(packets[0].1).unwrap(),
             PacketHeader {
                 kind: TestMessage::KIND,
-                id: PacketId { msgid, blockid: blocks as u16 },
+                id: PacketId {
+                    msgid,
+                    blockid: blocks as u16
+                },
                 checksum: chk1,
             }
         );

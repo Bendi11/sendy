@@ -1,7 +1,6 @@
 use bytes::{BufMut, Bytes};
 
-use super::sock::{PacketKind, ToBytes, FromBytes};
-
+use super::sock::{FromBytes, PacketKind, ToBytes};
 
 /// An enumeration over all application layer messages that may be passed between nodes
 #[repr(u8)]
@@ -31,7 +30,12 @@ impl TryFrom<u8> for MessageKind {
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         Ok(match value.checked_sub(PacketKind::MSG_TAG_OFFSET) {
             Some(0) => Self::Test,
-            _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid message kind"))
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Invalid message kind",
+                ))
+            }
         })
     }
 }

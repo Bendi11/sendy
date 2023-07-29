@@ -1,7 +1,10 @@
 use std::{net::SocketAddrV4, time::Duration};
 
 use clap::Parser;
-use sendy_framework::net::{sock::{ReliableSocket, SocketConfig}, msg::TestMessage};
+use sendy_framework::net::{
+    msg::TestMessage,
+    sock::{ReliableSocket, SocketConfig},
+};
 
 /// Test UDP connection on local network
 #[derive(Parser, Debug)]
@@ -21,12 +24,18 @@ async fn main() {
 
     let args = Args::parse();
 
-    let sock = ReliableSocket::new(SocketConfig::default(), args.addr.port(), *args.addr.ip()).await.unwrap();
+    let sock = ReliableSocket::new(SocketConfig::default(), args.addr.port(), *args.addr.ip())
+        .await
+        .unwrap();
     sock.tunnel().await.unwrap();
 
     sock.send(TestMessage(
-        (0..19_000_000u32).map(|v| v.to_le_bytes()[0]).collect::<Vec<u8>>()
-    )).await.unwrap();
+        (0..19_000_000u32)
+            .map(|v| v.to_le_bytes()[0])
+            .collect::<Vec<u8>>(),
+    ))
+    .await
+    .unwrap();
 
     let msg = sock.recv().await;
 

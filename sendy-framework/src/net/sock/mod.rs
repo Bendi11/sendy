@@ -1,15 +1,22 @@
+mod packet;
 mod recv;
 mod tx;
-mod packet;
 
-use std::{sync::{atomic::AtomicU8, Arc}, net::{SocketAddr, SocketAddrV4, Ipv4Addr}};
+use std::{
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    sync::{atomic::AtomicU8, Arc},
+};
 
 use dashmap::DashMap;
 pub(crate) use packet::PacketKind;
-pub use packet::{ToBytes, FromBytes};
+pub use packet::{FromBytes, ToBytes};
 use tokio::{net::UdpSocket, sync::Notify};
 
-use self::{tx::ReliableSocketCongestionControl, packet::{PacketId, ConnMessage}, recv::ReliableSocketRecv};
+use self::{
+    packet::{ConnMessage, PacketId},
+    recv::ReliableSocketRecv,
+    tx::ReliableSocketCongestionControl,
+};
 
 use super::msg::{Message, ReceivedMessage};
 
@@ -72,24 +79,25 @@ impl ReliableSocket {
 
         let recvproc = internal.clone().spawn_recv_thread().await;
 
-        Ok(Self {
-            internal,
-            recvproc,
-        })
+        Ok(Self { internal, recvproc })
     }
 
     pub async fn tunnel(&self) -> std::io::Result<()> {
-        self.send(ConnMessage).await?; 
+        self.send(ConnMessage).await?;
 
         Ok(())
     }
-    
+
     /// Send the given message to a remote peer, may potentially block for some time as the peer
     /// must respond with ACK packets for every packet that is sent
-    pub async fn send<M: Message>(&self, msg: M) -> std::io::Result<()> { self.internal.send(msg).await }
+    pub async fn send<M: Message>(&self, msg: M) -> std::io::Result<()> {
+        self.internal.send(msg).await
+    }
 
     /// Wait for a peer to send a message to the host, and read the message bytes
-    pub async fn recv(&self) -> ReceivedMessage { self.internal.recv().await }
+    pub async fn recv(&self) -> ReceivedMessage {
+        self.internal.recv().await
+    }
 }
 
 impl Drop for ReliableSocket {

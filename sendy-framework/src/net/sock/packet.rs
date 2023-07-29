@@ -1,8 +1,8 @@
-use std::{num::NonZeroU8, fmt};
+use std::{fmt, num::NonZeroU8};
 
-use bytes::{BufMut, Buf};
+use bytes::{Buf, BufMut};
 
-use crate::net::msg::{MessageKind, Message};
+use crate::net::msg::{Message, MessageKind};
 
 /// 'minimum maximum reassembly buffer size' guaranteed to be deliverable, minus IP and UDP headers
 pub(crate) const MAX_SAFE_UDP_PAYLOAD: usize = 500;
@@ -24,7 +24,7 @@ pub(crate) struct PacketHeader {
     /// 1 byte representing the kind of packet this is, see [PacketKind] for usage
     pub kind: PacketKind,
     /// The message and block id of this packet, see [PacketId] for usage
-    pub id: PacketId, 
+    pub id: PacketId,
     /// CRC32 checksum of the following payload bytes
     pub checksum: u32,
 }
@@ -65,7 +65,7 @@ pub enum PacketKind {
     /// Signals that the following payload bytes are to be placed at the offset into the message
     /// given by the [PacketId] of the header
     Transfer = 2,
-    
+
     /// An application-level message packet
     Message(MessageKind),
 }
@@ -74,17 +74,33 @@ pub enum PacketKind {
 /// functions to send ACK packets with the same interface as other messages
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AckMessage;
-impl Message for AckMessage { const KIND: PacketKind = PacketKind::Ack; }
-impl FromBytes for AckMessage { fn parse<R: Buf>(_: R) -> Result<Self, std::io::Error> { Ok(Self) } }
-impl ToBytes for AckMessage { fn write<W: BufMut>(&self, _: W) { } }
+impl Message for AckMessage {
+    const KIND: PacketKind = PacketKind::Ack;
+}
+impl FromBytes for AckMessage {
+    fn parse<R: Buf>(_: R) -> Result<Self, std::io::Error> {
+        Ok(Self)
+    }
+}
+impl ToBytes for AckMessage {
+    fn write<W: BufMut>(&self, _: W) {}
+}
 
 /// Unit struct that implements the [Message] trait with no payload, allowing the lower-level
 /// functions to send CONN packets with the same interface as other messages
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ConnMessage;
-impl Message for ConnMessage { const KIND: PacketKind = PacketKind::Conn; }
-impl FromBytes for ConnMessage { fn parse<R: Buf>(_: R) -> Result<Self, std::io::Error> { Ok(Self) } }
-impl ToBytes for ConnMessage { fn write<W: BufMut>(&self, _: W) { } }
+impl Message for ConnMessage {
+    const KIND: PacketKind = PacketKind::Conn;
+}
+impl FromBytes for ConnMessage {
+    fn parse<R: Buf>(_: R) -> Result<Self, std::io::Error> {
+        Ok(Self)
+    }
+}
+impl ToBytes for ConnMessage {
+    fn write<W: BufMut>(&self, _: W) {}
+}
 
 impl PacketKind {
     /// The tag to be used for the message tag with the lowest ID in the
@@ -92,12 +108,14 @@ impl PacketKind {
     pub const MSG_TAG_OFFSET: u8 = 3;
 }
 
-/// Trait to be implemented by all types that can be written to a byte buffer 
+/// Trait to be implemented by all types that can be written to a byte buffer
 pub trait ToBytes: Sized {
     /// Write the representation of this payload to a buffer of bytes
     fn write<W: BufMut>(&self, buf: W);
     /// Provide the encoded size in bytes of this value
-    fn size_hint(&self) -> Option<usize> { None }
+    fn size_hint(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// Trait implemented by all types that may be parsed from a byte buffer
@@ -117,13 +135,14 @@ impl ToBytes for PacketId {
 impl FromBytes for PacketId {
     fn parse<R: Buf>(mut buf: R) -> Result<Self, std::io::Error> {
         let msgid = buf.get_u8();
-        let msgid = NonZeroU8::new(msgid)
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Packet ID with invalid message ID 0"))?;
+        let msgid = NonZeroU8::new(msgid).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Packet ID with invalid message ID 0",
+            )
+        })?;
         let blockid = buf.get_u16_le();
-        Ok(Self {
-            msgid,
-            blockid,
-        })
+        Ok(Self { msgid, blockid })
     }
 }
 
@@ -141,11 +160,7 @@ impl FromBytes for PacketHeader {
         let id = PacketId::parse(&mut buf)?;
         let checksum = buf.get_u32_le();
 
-        Ok(Self {
-            kind,
-            id,
-            checksum,
-        })
+        Ok(Self { kind, id, checksum })
     }
 }
 
