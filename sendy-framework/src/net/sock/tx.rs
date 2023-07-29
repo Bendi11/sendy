@@ -143,7 +143,8 @@ impl ReliableSocketInternal {
         };
 
         header.write(&mut buf[..HEADER_SZ]);
-
+        
+        println!("SENT ACK {}: {}", id, buf.len());
         self.sock.send_to(&buf, self.remote).await?;
 
         Ok(())
