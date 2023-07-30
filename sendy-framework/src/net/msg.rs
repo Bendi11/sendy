@@ -8,6 +8,11 @@ use crate::ser::{ToBytes, FromBytes, FromBytesError};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MessageKind {
     Test = PacketKind::MSG_TAG_OFFSET,
+    /// Signals that the following message introduction is in response to an already-sent message - 
+    /// the message ID of the packet is the message that this is reponding to
+    Respond = PacketKind::MSG_TAG_OFFSET + 1,
+    /// Transfer authentication public key + certificate and encryption public key
+    AuthConnect = PacketKind::MSG_TAG_OFFSET + 2,
 }
 
 /// A message that has been received from a remote peer, but has not yet been parsed to a message
@@ -31,6 +36,8 @@ impl TryFrom<u8> for MessageKind {
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         Ok(match value.checked_sub(PacketKind::MSG_TAG_OFFSET) {
             Some(0) => Self::Test,
+            Some(1) => Self::Respond,
+            Some(2) => Self::AuthConnect,
             _ => {
                 return Err(FromBytesError::Parsing(format!("Invalid message kind {:X}", value)))
             }

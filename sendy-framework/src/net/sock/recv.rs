@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use slab::Slab;
 use tokio::sync::{
     mpsc::Sender,
-    OwnedSemaphorePermit, RwLock, Semaphore,
+    OwnedSemaphorePermit, RwLock, Semaphore, oneshot,
 };
 
 use crate::{
@@ -33,10 +33,13 @@ use super::{
 /// State required for a reliable socket's reception arm
 #[derive(Debug)]
 pub(crate) struct ReliableSocketRecv {
+    /// A map of message IDs from the given IP addresses and message IDs to the channel to send the
+    /// message response to when received
+    pub responses: DashMap<(IpAddr, NonZeroU8), oneshot::Sender<Bytes>>,
     /// A queue of messages that have finished being received, values here are still tracked by
     /// `buffered_bytes` and should update `buffered_bytes` when removed (this is handled in
     /// [ReliableSocketConnectionInternal](super::ReliableSocketConnectionInternal)
-    pub finished: DashMap<IpAddr, Sender<FinishedMessage>>,
+    pub requests: DashMap<IpAddr, Sender<FinishedMessage>>,
     /// A semaphore with [max_recv_mem](crate::net::sock::SocketConfig::max_recv_mem) permits
     /// available, one permit is equal to one byte
     pub recv_buf_permit: Arc<Semaphore>,
@@ -76,7 +79,8 @@ impl ReliableSocketRecv {
     /// See also: [spawn_recv_thread](ReliableSocketInternal::spawn_recv_thread)
     pub fn new(cfg: &SocketConfig) -> Self {
         Self {
-            finished: DashMap::new(),
+            responses: DashMap::new(),
+            requests: DashMap::new(),
             messages: RwLock::new(Slab::with_capacity(8)),
             recv_buf_permit: Arc::new(Semaphore::new(cfg.max_recv_mem)),
         }
@@ -123,7 +127,58 @@ impl ReliableSocketInternal {
     }
 }
 
+
 impl ReliableSocketInternal {
+    /// Create a new buffer in `messages` with enough storage capacity to copy all expected bytes
+    /// of the message, waiting to acquire a permit for the expected size of the message
+    async fn new_reassemble_buffer(&self, addr: &SocketAddr, id: PacketId, kind: MessageKind) {
+        let expected_blocks = id.blockid;
+            let size_estimation = expected_blocks as usize * BLOCK_SIZE;
+            if size_estimation > self.cfg.max_recv_mem {
+                log::error!(
+                    "{}: Received message introduction packet that specifies {}B, but only have space for {}B",
+                    addr,
+                    size_estimation,
+                    self.cfg.max_recv_mem,
+                );
+
+                return;
+            }
+
+            let permit = self
+                .recv
+                .recv_buf_permit
+                .clone()
+                .acquire_many_owned(size_estimation as u32)
+                .await
+                .expect("Receive permits semaphore closed");
+
+            //Fill a Vec with contiguous chunks of a buffer that can be individually locked
+            let mut blocks = Vec::with_capacity(expected_blocks as usize);
+            let mut tmp_buf = BytesMut::with_capacity(size_estimation);
+            for _ in 0..expected_blocks {
+                let rest = tmp_buf.split_off(BLOCK_SIZE);
+                blocks.push(Mutex::new(tmp_buf));
+                tmp_buf = rest;
+            }
+
+            let slot = RecvMessage {
+                permit,
+                kind,
+                msg_id: id.msgid,
+                blocks,
+                indexes: AtomicBitSet::new(),
+                expected_blocks,
+                received_blocks: AtomicU16::new(0),
+            };
+
+            {
+                let mut messages = self.recv.messages.write().await;
+                messages.insert(slot);
+            }
+
+    }
+
     /// Handle a packet received via UDP, reassembling the buffer, starting new message receptions,
     /// and sending ACKs when needed
     async fn handle_pkt(self: Arc<Self>, addr: SocketAddr, received_bytes: usize, buf: [u8; MAX_SAFE_UDP_PAYLOAD]) {
@@ -180,50 +235,7 @@ impl ReliableSocketInternal {
                 return;
             }
 
-            let expected_blocks = header.id.blockid;
-            let size_estimation = expected_blocks as usize * BLOCK_SIZE;
-            if size_estimation > self.cfg.max_recv_mem {
-                log::error!(
-                    "{}: Received message introduction packet that specifies {}B, but only have space for {}B",
-                    addr,
-                    size_estimation,
-                    self.cfg.max_recv_mem,
-                );
-
-                return;
-            }
-
-            let permit = self
-                .recv
-                .recv_buf_permit
-                .clone()
-                .acquire_many_owned(size_estimation as u32)
-                .await
-                .expect("Receive permits semaphore closed");
-
-            //Fill a Vec with contiguous chunks of a buffer that can be individually locked
-            let mut blocks = Vec::with_capacity(expected_blocks as usize);
-            let mut tmp_buf = BytesMut::with_capacity(size_estimation);
-            for _ in 0..expected_blocks {
-                let rest = tmp_buf.split_off(BLOCK_SIZE);
-                blocks.push(Mutex::new(tmp_buf));
-                tmp_buf = rest;
-            }
-
-            let slot = RecvMessage {
-                permit,
-                kind,
-                msg_id: header.id.msgid,
-                blocks,
-                indexes: AtomicBitSet::new(),
-                expected_blocks,
-                received_blocks: AtomicU16::new(0),
-            };
-
-            {
-                let mut messages = self.recv.messages.write().await;
-                messages.insert(slot);
-            }
+            self.new_reassemble_buffer(&addr, header.id, kind).await;
 
             0
         } else {
@@ -290,7 +302,7 @@ impl ReliableSocketInternal {
                     Bytes::new()
                 };
 
-                match self.recv.finished.get(&addr.ip()) {
+                match self.recv.requests.get(&addr.ip()) {
                     Some(sender) => {
                         if let Err(e) = sender
                             .send(FinishedMessage {
@@ -304,8 +316,15 @@ impl ReliableSocketInternal {
                             log::error!("Failed to send reassembled message to queue: {}", e);
                         }
                     },
-                    None => {
-                        log::error!("Finished message from {} but no connection is listening from that address", addr);
+                    None => match self.recv.responses.remove(&(addr.ip(), finished.msg_id)) {
+                        Some((_, response)) => {
+                            if let Err(_) = response.send(bytes) {
+                                log::error!("Failed to send response bytes to listener");
+                            }
+                        },
+                        None => {
+                            log::error!("Finished message from {} but no connection is listening from that address", addr);
+                        },
                     }
                 }
 

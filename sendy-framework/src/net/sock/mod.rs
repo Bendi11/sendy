@@ -45,10 +45,10 @@ pub struct ReliableSocket {
 pub struct ReliableSocketConnection {
     /// A reference to the socket manager that handles actual tx and rx
     internal: Arc<ReliableSocketInternal>,
-    /// Counter used to create IDs for transmitted messages
-    msgid: AtomicU8,
     /// Address and port of the remote peer
     remote: SocketAddr,
+    /// Counter used to create IDs for transmitted messages
+    msgid: AtomicU8,
     /// Channel that fully reassembled messages are sent to
     recv: Mutex<Receiver<FinishedMessage>>,
     /// Congestion control to limit the number of messages that may be sent
@@ -94,7 +94,7 @@ impl ReliableSocket {
         let (sender, recv) = tokio::sync::mpsc::channel(16);
         let recv = Mutex::new(recv);
 
-        self.internal.recv.finished.insert(addr.ip(), sender);
+        self.internal.recv.requests.insert(addr.ip(), sender);
         
         if !self.internal.socks.contains_key(&addr.port()) {
             self.internal.socks.insert(
