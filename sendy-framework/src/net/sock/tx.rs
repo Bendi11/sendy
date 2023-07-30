@@ -4,11 +4,11 @@ use std::{
         atomic::{AtomicU32, AtomicU8, Ordering},
         Arc,
     },
-    time::{Duration, Instant}, net::SocketAddr, io::ErrorKind,
+    time::{Duration, Instant}, net::{SocketAddr, IpAddr}, io::ErrorKind,
 };
 
-use bytes::{buf::UninitSlice, BufMut, BytesMut};
-use tokio::{sync::{Notify, Semaphore}, net::UdpSocket};
+use bytes::{buf::UninitSlice, BufMut, BytesMut, Bytes};
+use tokio::{sync::{Notify, Semaphore, oneshot}, net::UdpSocket};
 
 use crate::{
     net::msg::Message,
@@ -69,10 +69,26 @@ impl ReliableSocketConnection {
 }
 
 impl ReliableSocketInternal {
-    /// Send a single message via UDP, splitting the message into as many packets as necessary to
-    /// transmit
+    /// Send a message via UDP to the connected peer of `conn`, returning a channel that will send
+    /// a value when the peer responds
+    pub async fn send_wait_response<M: Message>(&self, conn: &ReliableSocketConnection, msg: M) 
+        -> std::io::Result<oneshot::Receiver<Bytes>> {
+        let msgid = conn.next_message_id();
+        let recv = self.wait_response(conn.remote.ip(), msgid);
+        self.send_with_id(conn, msgid, msg).await?;
+        Ok(recv)
+    }
+    
+    /// Send a message to the connected peer via UDP *without* waiting for a response message
     pub async fn send<M: Message>(&self, conn: &ReliableSocketConnection, msg: M) -> std::io::Result<()> {
         let id = conn.next_message_id();
+        self.send_with_id(conn, id, msg).await
+    }
+
+    /// Send a single message via UDP, splitting the message into as many packets as necessary to
+    /// transmit. This method requires a valid message ID to be provided, see [send] for a more
+    /// general-purpose method
+    async fn send_with_id<M: Message>(&self, conn: &ReliableSocketConnection, id: NonZeroU8, msg: M) -> std::io::Result<()> {
         let mut splitter = MessageSplitter::new(M::KIND, id);
         msg.write(&mut splitter);
         let mut pkts = splitter
@@ -100,6 +116,13 @@ impl ReliableSocketInternal {
         }
 
         Ok(())
+    }
+    
+    /// Wait for the peer to send a response to an already-sent message identified by `msgid`
+    fn wait_response(&self, from: IpAddr, msgid: NonZeroU8) -> oneshot::Receiver<Bytes> {
+        let (tx, rx) = oneshot::channel::<Bytes>();
+        self.recv.responses.insert((from, msgid), tx);
+        rx
     }
 
     /// Repeatedly send the given packet via UDP while waiting for an ACK packet in response

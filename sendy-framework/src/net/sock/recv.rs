@@ -50,7 +50,10 @@ pub(crate) struct ReliableSocketRecv {
 /// A fully reassembled message, also containing a permit for the amount of memory it is using
 #[derive(Debug)]
 pub(crate) struct FinishedMessage {
+    /// Semaphore permit acquired from a [ReliableSocketRecv] that should be dropped when the
+    /// request is handled
     pub permit: OwnedSemaphorePermit,
+    /// The message that was reassembled
     pub msg: ReceivedMessage,
 }
 
@@ -309,6 +312,7 @@ impl ReliableSocketInternal {
                                 permit: finished.permit,
                                 msg: ReceivedMessage {
                                     kind: finished.kind,
+                                    id: finished.msg_id,
                                     bytes,
                                 },
                             })

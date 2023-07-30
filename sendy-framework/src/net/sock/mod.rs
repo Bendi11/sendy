@@ -7,10 +7,11 @@ use std::{
     sync::{atomic::AtomicU8, Arc},
 };
 
+use bytes::Bytes;
 use dashmap::DashMap;
 pub(crate) use packet::PacketKind;
 use parking_lot::Mutex;
-use tokio::{net::UdpSocket, sync::{Notify, mpsc::Receiver}};
+use tokio::{net::UdpSocket, sync::{Notify, mpsc::Receiver, oneshot}};
 
 use self::{
     packet::PacketId,
@@ -117,7 +118,7 @@ impl ReliableSocket {
 }
 
 impl ReliableSocketConnection {
-    /// Await the reception of a message from the connected peer
+    /// Await the reception of a request from the connected peer
     pub async fn recv(&self) -> ReceivedMessage {
         if let Some(next) = self.recv.lock().recv().await {
             //Return the permit tracking buffer space used
@@ -126,7 +127,12 @@ impl ReliableSocketConnection {
         } else {
             panic!("Message receiver channel closed");
         }
-
+    }
+    
+    /// Send the given request message and await a response from the remote
+    pub async fn send_wait_response<M: Message>(&self, msg: M)
+        -> std::io::Result<oneshot::Receiver<Bytes>> {
+        self.internal.send_wait_response(self, msg).await
     }
 
     /// Send the given message to the connected peer, returns an `Error` if writing to the socket

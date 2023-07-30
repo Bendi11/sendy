@@ -1,3 +1,5 @@
+use std::num::NonZeroU8;
+
 use bytes::Bytes;
 
 use super::sock::PacketKind;
@@ -21,6 +23,8 @@ pub enum MessageKind {
 pub struct ReceivedMessage {
     /// Received message kind, used to instruct parsing
     pub kind: MessageKind,
+    /// ID of the message as it was transmitted by the peer
+    pub(crate) id: NonZeroU8,
     /// The payload of the message
     pub bytes: Bytes,
 }
