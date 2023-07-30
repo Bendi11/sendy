@@ -238,7 +238,7 @@ impl ReliableSocketInternal {
                 return
             };
             
-            ///No task is waiting for a response message that was sent
+            //No task is waiting for a response message that was sent
             if kind == MessageKind::Respond && !self.recv.responses.contains_key(&(addr.ip(), header.id.msgid)) {
                 log::error!(
                     "Received response message for {} but there are no tasks awaiting the response",

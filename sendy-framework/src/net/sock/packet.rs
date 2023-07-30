@@ -66,8 +66,6 @@ pub enum PacketKind {
     /// given by the [PacketId] of the header
     Transfer = 2,
 
-    Response = 3,
-
     /// An application-level message packet
     Message(MessageKind),
 }
@@ -91,7 +89,7 @@ impl ToBytes for AckMessage {
 impl PacketKind {
     /// The tag to be used for the message tag with the lowest ID in the
     /// [MessageKind] enum
-    pub const MSG_TAG_OFFSET: u8 = 4;
+    pub const MSG_TAG_OFFSET: u8 = 3;
 }
 
 impl ToBytes for PacketId {
@@ -149,7 +147,6 @@ impl FromBytes for PacketKind {
             0 => Self::Conn,
             1 => Self::Ack,
             2 => Self::Transfer,
-            3 => Self::Response,
             other => Self::Message(MessageKind::try_from(other)?),
         })
     }
@@ -161,7 +158,6 @@ impl ToBytes for PacketKind {
             Self::Conn => 0,
             Self::Ack => 1,
             Self::Transfer => 2,
-            Self::Response => 3,
             Self::Message(msg) => *msg as u8,
         };
         buf.put_u8(v);
