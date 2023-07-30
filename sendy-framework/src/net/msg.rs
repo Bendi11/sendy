@@ -1,7 +1,7 @@
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 
 use super::sock::PacketKind;
-use crate::ser::{ToBytes, FromBytes};
+use crate::ser::{ToBytes, FromBytes, FromBytesError};
 
 /// An enumeration over all application layer messages that may be passed between nodes
 #[repr(u8)]
@@ -26,16 +26,13 @@ pub trait Message: ToBytes + FromBytes {
 }
 
 impl TryFrom<u8> for MessageKind {
-    type Error = std::io::Error;
+    type Error = FromBytesError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         Ok(match value.checked_sub(PacketKind::MSG_TAG_OFFSET) {
             Some(0) => Self::Test,
             _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "Invalid message kind",
-                ))
+                return Err(FromBytesError::Parsing(format!("Invalid message kind {:X}", value)))
             }
         })
     }
@@ -49,10 +46,10 @@ impl Message for TestMessage {
 }
 
 impl FromBytes for TestMessage {
-    fn parse<R: bytes::Buf>(rbuf: R) -> Result<Self, std::io::Error> {
-        let mut buf = vec![];
-        buf.put(rbuf);
-        Ok(Self(buf))
+    fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        Ok(Self(
+            buf.read_bytes_to_end().as_slice_less_safe().to_owned()
+        ))
     }
 }
 

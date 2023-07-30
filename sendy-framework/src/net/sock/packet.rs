@@ -1,8 +1,8 @@
 use std::{fmt, num::NonZeroU8};
 
-use bytes::{Buf, BufMut};
+use bytes::BufMut;
 
-use crate::{net::msg::{Message, MessageKind}, ser::{FromBytes, ToBytes}};
+use crate::{net::msg::{Message, MessageKind}, ser::{FromBytes, ToBytes, FromBytesError}};
 
 /// 'minimum maximum reassembly buffer size' guaranteed to be deliverable, minus IP and UDP headers
 pub(crate) const MAX_SAFE_UDP_PAYLOAD: usize = 500;
@@ -78,27 +78,11 @@ impl Message for AckMessage {
     const KIND: PacketKind = PacketKind::Ack;
 }
 impl FromBytes for AckMessage {
-    fn parse<R: Buf>(_: R) -> Result<Self, std::io::Error> {
+    fn parse(_: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
         Ok(Self)
     }
 }
 impl ToBytes for AckMessage {
-    fn write<W: BufMut>(&self, _: W) {}
-}
-
-/// Unit struct that implements the [Message] trait with no payload, allowing the lower-level
-/// functions to send CONN packets with the same interface as other messages
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ConnMessage;
-impl Message for ConnMessage {
-    const KIND: PacketKind = PacketKind::Conn;
-}
-impl FromBytes for ConnMessage {
-    fn parse<R: Buf>(_: R) -> Result<Self, std::io::Error> {
-        Ok(Self)
-    }
-}
-impl ToBytes for ConnMessage {
     fn write<W: BufMut>(&self, _: W) {}
 }
 
@@ -116,15 +100,13 @@ impl ToBytes for PacketId {
 }
 
 impl FromBytes for PacketId {
-    fn parse<R: Buf>(mut buf: R) -> Result<Self, std::io::Error> {
-        let msgid = buf.get_u8();
-        let msgid = NonZeroU8::new(msgid).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Packet ID with invalid message ID 0",
-            )
-        })?;
-        let blockid = buf.get_u16_le();
+    fn parse(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
+        let msgid = u8::parse(buf)?;
+        let msgid = NonZeroU8::new(msgid).ok_or_else(||
+                FromBytesError::Parsing("Packet ID with invalid message ID 0".to_owned()),
+        )?;
+
+        let blockid = u16::parse(buf)?;
         Ok(Self { msgid, blockid })
     }
 }
@@ -138,10 +120,10 @@ impl ToBytes for PacketHeader {
 }
 
 impl FromBytes for PacketHeader {
-    fn parse<R: Buf>(mut buf: R) -> Result<Self, std::io::Error> {
-        let kind = PacketKind::parse(&mut buf)?;
-        let id = PacketId::parse(&mut buf)?;
-        let checksum = buf.get_u32_le();
+    fn parse(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
+        let kind = PacketKind::parse(buf)?;
+        let id = PacketId::parse(buf)?;
+        let checksum = u32::parse(buf)?;
 
         Ok(Self { kind, id, checksum })
     }
@@ -159,8 +141,8 @@ impl PacketKind {
 }
 
 impl FromBytes for PacketKind {
-    fn parse<B: Buf>(mut buf: B) -> Result<Self, std::io::Error> {
-        let value = buf.get_u8();
+    fn parse(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
+        let value = u8::parse(buf)?;
         Ok(match value {
             0 => Self::Conn,
             1 => Self::Ack,

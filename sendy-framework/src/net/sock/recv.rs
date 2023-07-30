@@ -22,7 +22,7 @@ use crate::{
             PacketKind,
         },
     },
-    ser::FromBytes,
+    ser::{FromBytes, FromBytesError},
 };
 
 use super::{
@@ -127,7 +127,11 @@ impl ReliableSocketInternal {
     /// Handle a packet received via UDP, reassembling the buffer, starting new message receptions,
     /// and sending ACKs when needed
     async fn handle_pkt(self: Arc<Self>, addr: SocketAddr, received_bytes: usize, buf: [u8; MAX_SAFE_UDP_PAYLOAD]) {
-        let header = match PacketHeader::parse(&buf[..]) {
+        let reader = untrusted::Input::from(&buf[0..HEADER_SZ]);
+        let header = match reader.read_all(
+            FromBytesError::Parsing("Trailing bytes in packet header".to_owned()),
+            PacketHeader::parse
+        ) {
             Ok(header) => header,
             Err(e) => {
                 log::error!("Failed to parse packet header from {}: {}", addr, e);

@@ -250,7 +250,7 @@ impl MessageSplitter {
             let checksum = crc32fast::hash(&pkt[HEADER_SZ..]);
             (&mut pkt[CHECKSUM_OFFSET..]).put_u32_le(checksum);
             let id =
-                PacketId::parse(&pkt[1..]).expect("MessageSplitter produced invalid packet id");
+                PacketId::parse(&mut untrusted::Reader::new(untrusted::Input::from(&pkt[1..]))).expect("MessageSplitter produced invalid packet id");
             (id, &pkt[..])
         })
     }
@@ -323,7 +323,9 @@ mod tests {
 
         let chk1 = crc32fast::hash(&payload[..BLOCK_SIZE]);
         assert_eq!(
-            PacketHeader::parse(packets[0].1).unwrap(),
+            PacketHeader::parse(
+                &mut untrusted::Reader::new(untrusted::Input::from(&packets[0].1))
+            ).unwrap(),
             PacketHeader {
                 kind: TestMessage::KIND,
                 id: PacketId {

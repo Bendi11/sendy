@@ -1,6 +1,6 @@
-use std::{sync::Arc, net::IpAddr};
+use std::sync::Arc;
 
-use rsa::{RsaPrivateKey, RsaPublicKey};
+use rsa::RsaPrivateKey;
 
 use self::sock::ReliableSocket;
 
