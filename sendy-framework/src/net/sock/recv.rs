@@ -235,7 +235,17 @@ impl ReliableSocketInternal {
                 .any(|(_, m)| m.msg_id == header.id.msgid)
             {
                 self.send_ack(&addr, header.id).await;
-                return;
+                return
+            }
+
+            if kind == MessageKind::Respond && !self.recv.responses.contains_key(&(addr.ip(), header.id.msgid)) {
+                log::error!(
+                    "Received response message for {} but there are no tasks awaiting the response",
+                    header.id.msgid,
+                );
+
+                self.send_ack(&addr, header.id).await;
+                return
             }
 
             self.new_reassemble_buffer(&addr, header.id, kind).await;

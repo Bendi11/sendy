@@ -13,6 +13,8 @@ pub(crate) use packet::PacketKind;
 use parking_lot::Mutex;
 use tokio::{net::UdpSocket, sync::{Notify, mpsc::Receiver, oneshot}};
 
+use crate::net::msg::MessageKind;
+
 use self::{
     packet::PacketId,
     recv::{ReliableSocketRecv, FinishedMessage},
@@ -133,6 +135,16 @@ impl ReliableSocketConnection {
     pub async fn send_wait_response<M: Message>(&self, msg: M)
         -> std::io::Result<oneshot::Receiver<Bytes>> {
         self.internal.send_wait_response(self, msg).await
+    }
+    
+    /// Respond to the given request message with a payload only, no message kind needed
+    pub async fn respond<R: Message>(&self, req: &ReceivedMessage, response: R) -> std::io::Result<()> {
+        assert_eq!(
+            R::KIND,
+            PacketKind::Message(MessageKind::Respond),
+            "May only send response message in response"
+        );
+        self.internal.send_with_id(self, req.id, response).await
     }
 
     /// Send the given message to the connected peer, returns an `Error` if writing to the socket

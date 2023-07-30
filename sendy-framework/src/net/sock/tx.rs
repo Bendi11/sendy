@@ -88,7 +88,7 @@ impl ReliableSocketInternal {
     /// Send a single message via UDP, splitting the message into as many packets as necessary to
     /// transmit. This method requires a valid message ID to be provided, see [send] for a more
     /// general-purpose method
-    async fn send_with_id<M: Message>(&self, conn: &ReliableSocketConnection, id: NonZeroU8, msg: M) -> std::io::Result<()> {
+    pub async fn send_with_id<M: Message>(&self, conn: &ReliableSocketConnection, id: NonZeroU8, msg: M) -> std::io::Result<()> {
         let mut splitter = MessageSplitter::new(M::KIND, id);
         msg.write(&mut splitter);
         let mut pkts = splitter
