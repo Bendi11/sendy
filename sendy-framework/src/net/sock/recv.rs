@@ -236,8 +236,9 @@ impl ReliableSocketInternal {
             {
                 self.send_ack(&addr, header.id).await;
                 return
-            }
-
+            };
+            
+            ///No task is waiting for a response message that was sent
             if kind == MessageKind::Respond && !self.recv.responses.contains_key(&(addr.ip(), header.id.msgid)) {
                 log::error!(
                     "Received response message for {} but there are no tasks awaiting the response",
@@ -315,33 +316,40 @@ impl ReliableSocketInternal {
                     Bytes::new()
                 };
 
-                match self.recv.requests.get(&addr.ip()) {
-                    Some(sender) => {
-                        if let Err(e) = sender
-                            .send(FinishedMessage {
-                                permit: finished.permit,
-                                msg: ReceivedMessage {
-                                    kind: finished.kind,
-                                    id: finished.msg_id,
-                                    bytes,
-                                },
-                            })
-                            .await {
-                            log::error!("Failed to send reassembled message to queue: {}", e);
-                        }
-                    },
-                    None => match self.recv.responses.remove(&(addr.ip(), finished.msg_id)) {
+                match finished.kind {
+                    MessageKind::Respond => match self.recv.responses.remove(&(addr.ip(), finished.msg_id)) {
                         Some((_, response)) => {
                             if let Err(_) = response.send(bytes) {
                                 log::error!("Failed to send response bytes to listener");
                             }
                         },
                         None => {
-                            log::error!("Finished message from {} but no connection is listening from that address", addr);
+                            log::error!(
+                                "Received a response for message {} but there are no tasks waiting for it",
+                                finished.msg_id,
+                            );
                         },
+                    },
+                    _ => match self.recv.requests.get(&addr.ip()) {
+                        Some(sender) => {
+                            if let Err(e) = sender
+                                .send(FinishedMessage {
+                                    permit: finished.permit,
+                                    msg: ReceivedMessage {
+                                        kind: finished.kind,
+                                        id: finished.msg_id,
+                                        bytes,
+                                    },
+                                })
+                                .await {
+                                log::error!("Failed to send reassembled message to queue: {}", e);
+                            }
+                        },
+                        None => {
+                            log::error!("Finished message from {} but no connection is listening from that address", addr);
+                        }
                     }
                 }
-
             },
             Ordering::Greater => {
                 log::warn!(
