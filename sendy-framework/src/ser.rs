@@ -14,12 +14,14 @@ pub trait ToBytes: Sized {
     }
 }
 
-/// Trait implemented by all types that may be parsed from a byte buffer
+/// Trait implemented by all types that may be parsed from a byte buffer that is sent in a message
+/// payload
 pub trait FromBytes: Sized {
     /// Read bytes the given buffer (multi-byte words should be little endian) to create an
     /// instance of `Self`
-    fn parse<R: Buf>(buf: R) -> Result<Self, std::io::Error>;
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError>;
 }
+
 
 type VecToBytesLenType = u32;
 
@@ -46,10 +48,10 @@ impl<T: ToBytes> ToBytes for Vec<T> {
 }
 
 impl<T: FromBytes> FromBytes for Vec<T> {
-    fn parse<R: Buf>(mut buf: R) -> Result<Self, std::io::Error> {
-        let len: VecToBytesLenType = buf.get_u32_le();
+    fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let len: VecToBytesLenType = VecToBytesLenType::parse(buf)?;
         (0..len)
-            .map(|_| T::parse(&mut buf))
+            .map(|_| T::parse(buf))
             .collect::<Result<Self, _>>()
     }
 }
@@ -67,8 +69,9 @@ macro_rules! integral_from_to_bytes {
         }
 
         impl FromBytes for $type {
-            fn parse<B: Buf>(mut buf: B) -> Result<Self, std::io::Error> {
-                Ok(buf.$get_method_name())
+            fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+                let bytes = buf.read_bytes(std::mem::size_of::<Self>())?;
+                Ok(bytes.as_slice_less_safe().$get_method_name())
             }
         }
     };
@@ -113,13 +116,31 @@ impl ToBytes for RsaPublicKey {
 }
 
 impl FromBytes for RsaPublicKey {
-    fn parse<R: Buf>(mut buf: R) -> Result<Self, std::io::Error> {
-        let len = buf.get_u16_le();
-        let bytes = buf.copy_to_bytes(len as usize);
+    fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let len = RsaPublicKeyLen::parse(buf)?;
+        let bytes = buf.read_bytes(len as usize)?;
 
-        match RsaPublicKey::from_public_key_der(&bytes) {
+        match RsaPublicKey::from_public_key_der(bytes.as_slice_less_safe()) {
             Ok(pubkey) => Ok(pubkey),
-            Err(e) => Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, e)),
+            Err(e) => Err(FromBytesError::Parsing(e.to_string())),
         }
+    }
+}
+
+
+#[derive(Debug, thiserror::Error)]
+pub enum FromBytesError {
+    /// Error originating from the [untrusted] byte readers
+    #[error("Unexpected end of input")]
+    EndOfInput(untrusted::EndOfInput),
+    /// Parsing from messages should not be recoverable, so error messages can be stored as strings
+    /// to be displayed on the frontend
+    #[error("{0}")]
+    Parsing(String),
+}
+
+impl From<untrusted::EndOfInput> for FromBytesError {
+    fn from(value: untrusted::EndOfInput) -> Self {
+        Self::EndOfInput(value)
     }
 }
