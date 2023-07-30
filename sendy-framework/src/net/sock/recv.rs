@@ -1,15 +1,16 @@
 use std::{
     cmp::Ordering,
     num::NonZeroU8,
-    sync::{self, atomic::AtomicU16, Arc},
+    sync::{self, atomic::AtomicU16, Arc}, net::{SocketAddr, IpAddr}, io::ErrorKind,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
+use dashmap::DashMap;
 use hibitset::AtomicBitSet;
 use parking_lot::Mutex;
 use slab::Slab;
 use tokio::sync::{
-    mpsc::{self, Receiver, Sender},
+    mpsc::Sender,
     OwnedSemaphorePermit, RwLock, Semaphore,
 };
 
@@ -30,10 +31,9 @@ use super::{
 #[derive(Debug)]
 pub(crate) struct ReliableSocketRecv {
     /// A queue of messages that have finished being received, values here are still tracked by
-    /// `buffered_bytes` and should update `buffered_bytes` when removed
-    pub finished: Mutex<Receiver<FinishedMessage>>,
-    /// Sender to transmit reassembled message buffers back to the main thread
-    pub txfinish: Sender<FinishedMessage>,
+    /// `buffered_bytes` and should update `buffered_bytes` when removed (this is handled in
+    /// [ReliableSocketConnectionInternal](super::ReliableSocketConnectionInternal)
+    pub finished: DashMap<IpAddr, Sender<FinishedMessage>>,
     /// A semaphore with [max_recv_mem](crate::net::sock::SocketConfig::max_recv_mem) permits
     /// available, one permit is equal to one byte
     pub recv_buf_permit: Arc<Semaphore>,
@@ -72,11 +72,8 @@ impl ReliableSocketRecv {
     ///
     /// See also: [spawn_recv_thread](ReliableSocketInternal::spawn_recv_thread)
     pub fn new(cfg: &SocketConfig) -> Self {
-        let (txfinish, finished) = mpsc::channel(16);
-
         Self {
-            finished: Mutex::new(finished),
-            txfinish,
+            finished: DashMap::new(),
             messages: RwLock::new(Slab::with_capacity(8)),
             recv_buf_permit: Arc::new(Semaphore::new(cfg.max_recv_mem)),
         }
@@ -87,12 +84,33 @@ impl ReliableSocketInternal {
     pub async fn spawn_recv_thread(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         tokio::task::spawn(async move {
             loop {
-                let mut buf = [0u8; MAX_SAFE_UDP_PAYLOAD];
-                match self.sock.recv_from(&mut buf).await {
-                    Ok((read, _)) => {
-                        let this = self.clone();
-                        this.handle_pkt(read, buf).await;
+                let reads = self.socks.iter().map(|sock| Box::pin(async {
+                    if let Err(e) = sock.readable().await {
+                        log::error!("Failed to poll socket: {}", e);
+                        Err(*sock.key())
+                    } else {
+                        Ok(sock)
                     }
+                }));
+
+                let (readable, ..) = futures::future::select_all(reads).await;
+                let readable = match readable {
+                    Ok(r) => r,
+                    Err(bad_idx) => {
+                        drop(readable);
+                        self.socks.remove(&bad_idx);
+                        continue
+                    }
+                };
+
+                let mut buf = [0u8; MAX_SAFE_UDP_PAYLOAD];
+                match readable.try_recv_from(&mut buf) {
+                    Ok((read, addr)) => {
+                        let this = self.clone();
+                        this.handle_pkt(addr, read, buf).await;
+                    },
+                    //False positive - socket is not readable
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => (),
                     Err(e) => {
                         log::error!("Failed to receive from UDP socket: {}", e);
                     }
@@ -103,24 +121,13 @@ impl ReliableSocketInternal {
 }
 
 impl ReliableSocketInternal {
-    /// Wait for a message to be fully reassembled and sent from the receiver threat
-    pub async fn recv(&self) -> ReceivedMessage {
-        if let Some(next) = self.recv.finished.lock().recv().await {
-            //Return the permit tracking buffer space used
-            drop(next.permit);
-            next.msg
-        } else {
-            panic!("Message receiver channel closed");
-        }
-    }
-
     /// Handle a packet received via UDP, reassembling the buffer, starting new message receptions,
     /// and sending ACKs when needed
-    async fn handle_pkt(self: Arc<Self>, received_bytes: usize, buf: [u8; MAX_SAFE_UDP_PAYLOAD]) {
+    async fn handle_pkt(self: Arc<Self>, addr: SocketAddr, received_bytes: usize, buf: [u8; MAX_SAFE_UDP_PAYLOAD]) {
         let header = match PacketHeader::parse(&buf[..]) {
             Ok(header) => header,
             Err(e) => {
-                log::error!("Failed to parse packet header from {}: {}", self.remote, e);
+                log::error!("Failed to parse packet header from {}: {}", addr, e);
                 return;
             }
         };
@@ -134,7 +141,7 @@ impl ReliableSocketInternal {
                     self.awaiting_ack.remove(&header.id);
                 }
             } else {
-                self.send_ack(header.id).await;
+                self.send_ack(&addr, header.id).await;
             }
 
             return;
@@ -162,7 +169,7 @@ impl ReliableSocketInternal {
                 .iter()
                 .any(|(_, m)| m.msg_id == header.id.msgid)
             {
-                self.send_ack(header.id).await;
+                self.send_ack(&addr, header.id).await;
                 return;
             }
 
@@ -171,7 +178,7 @@ impl ReliableSocketInternal {
             if size_estimation > self.cfg.max_recv_mem {
                 log::error!(
                     "{}: Received message introduction packet that specifies {}B, but only have space for {}B",
-                    self.remote,
+                    addr,
                     size_estimation,
                     self.cfg.max_recv_mem,
                 );
@@ -226,11 +233,11 @@ impl ReliableSocketInternal {
             None => {
                 log::trace!(
                     "{}: Transfer packet received for nonexistent message {}",
-                    self.remote,
+                    addr,
                     header.id,
                 );
 
-                self.send_ack(header.id).await;
+                self.send_ack(&addr, header.id).await;
 
                 return;
             }
@@ -238,7 +245,7 @@ impl ReliableSocketInternal {
 
         //Already received packet
         if msg.indexes.contains(blockid as u32) {
-            self.send_ack(header.id).await;
+            self.send_ack(&addr, header.id).await;
             return;
         }
 
@@ -251,7 +258,7 @@ impl ReliableSocketInternal {
                 .fetch_add(1, sync::atomic::Ordering::SeqCst);
         }
 
-        self.send_ack(header.id).await;
+        self.send_ack(&addr, header.id).await;
 
         let received_blocks_count = msg.received_blocks.load(sync::atomic::Ordering::SeqCst);
         match received_blocks_count.cmp(&msg.expected_blocks) {
@@ -276,25 +283,30 @@ impl ReliableSocketInternal {
                     Bytes::new()
                 };
 
-                if let Err(e) = self
-                    .recv
-                    .txfinish
-                    .send(FinishedMessage {
-                        permit: finished.permit,
-                        msg: ReceivedMessage {
-                            kind: finished.kind,
-                            bytes,
-                        },
-                    })
-                    .await
-                {
-                    log::error!("Failed to send reassembled message to queue: {}", e);
+                match self.recv.finished.get(&addr.ip()) {
+                    Some(sender) => {
+                        if let Err(e) = sender
+                            .send(FinishedMessage {
+                                permit: finished.permit,
+                                msg: ReceivedMessage {
+                                    kind: finished.kind,
+                                    bytes,
+                                },
+                            })
+                            .await {
+                            log::error!("Failed to send reassembled message to queue: {}", e);
+                        }
+                    },
+                    None => {
+                        log::error!("Finished message from {} but no connection is listening from that address", addr);
+                    }
                 }
-            }
+
+            },
             Ordering::Greater => {
                 log::warn!(
                     "{}: Received {} blocks but expecting only {} - message dropped",
-                    self.remote,
+                    addr,
                     received_blocks_count,
                     msg.expected_blocks,
                 );
@@ -305,9 +317,9 @@ impl ReliableSocketInternal {
 
     /// Send an ACK packet to the remote peer, logging any error that occurs when transmitting the
     /// packet
-    async fn send_ack(&self, id: PacketId) {
-        if let Err(e) = self.send_single_raw(id, AckMessage).await {
-            log::error!("{}: Failed to send ACK packet: {}", self.remote, e,);
+    async fn send_ack(&self, addr: &SocketAddr, id: PacketId) {
+        if let Err(e) = self.send_single_raw(addr, id, AckMessage).await {
+            log::error!("{}: Failed to send ACK packet: {}", addr, e,);
         }
     }
 }

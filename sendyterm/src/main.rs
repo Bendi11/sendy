@@ -1,4 +1,4 @@
-use std::{net::SocketAddrV4, time::Duration};
+use std::{net::{SocketAddrV4, SocketAddr}, time::Duration};
 
 use clap::Parser;
 use sendy_framework::net::{
@@ -24,12 +24,12 @@ async fn main() {
 
     let args = Args::parse();
 
-    let sock = ReliableSocket::new(SocketConfig::default(), args.addr.port(), *args.addr.ip())
-        .await
-        .unwrap();
-    sock.tunnel().await.unwrap();
+    let sock = ReliableSocket::new(SocketConfig::default())
+        .await;
 
-    sock.send(TestMessage(
+    let conn = sock.connect(SocketAddr::V4(args.addr)).await.unwrap();
+
+    conn.send(TestMessage(
         (0..19_000_000u32)
             .map(|v| v.to_le_bytes()[0])
             .collect::<Vec<u8>>(),
@@ -37,7 +37,8 @@ async fn main() {
     .await
     .unwrap();
 
-    let msg = sock.recv().await;
+    let msg = conn.recv().await;
+    println!("{}", String::from_utf8_lossy(&msg.bytes));
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 }

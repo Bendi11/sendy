@@ -4,11 +4,11 @@ use std::{
         atomic::{AtomicU32, AtomicU8, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant}, net::SocketAddr, io::ErrorKind,
 };
 
 use bytes::{buf::UninitSlice, BufMut, BytesMut};
-use tokio::sync::{Notify, Semaphore};
+use tokio::{sync::{Notify, Semaphore}, net::UdpSocket};
 
 use crate::net::msg::Message;
 
@@ -17,7 +17,7 @@ use super::{
         PacketHeader, PacketId, BLOCKID_OFFSET, BLOCK_SIZE, CHECKSUM_OFFSET, HEADER_SZ,
         MAX_SAFE_UDP_PAYLOAD,
     },
-    FromBytes, PacketKind, ReliableSocketInternal, SocketConfig, ToBytes, ReliableSocketConnectionInternal,
+    FromBytes, PacketKind, ReliableSocketInternal, SocketConfig, ToBytes, ReliableSocketConnection,
 };
 
 /// Sensitivity to the RTT measurement to new changes in the response time in 10ths of a ms
@@ -49,16 +49,32 @@ impl ReliableSocketCongestionControl {
     }
 }
 
+impl ReliableSocketConnection {
+    /// Get the next message ID by incrementing the atomic ID counter
+    pub fn next_message_id(&self) -> NonZeroU8 {
+        //Ensure that the counter rolls over 0
+        if let Ok(v) = self
+            .msgid
+            .compare_exchange(u8::MAX, 1, Ordering::SeqCst, Ordering::Relaxed)
+        {
+            NonZeroU8::new(v).expect("NoZeroU8 is 0?")
+        } else {
+            NonZeroU8::new(self.msgid.fetch_add(1, Ordering::SeqCst))
+                .expect("msgid counter reached 0")
+        }
+    }
+}
+
 impl ReliableSocketInternal {
     /// Send a single message via UDP, splitting the message into as many packets as necessary to
     /// transmit
-    pub async fn send<M: Message>(&self, conn: &ReliableSocketConnectionInternal, msg: M) -> std::io::Result<()> {
-        let id = self.next_message_id();
+    pub async fn send<M: Message>(&self, conn: &ReliableSocketConnection, msg: M) -> std::io::Result<()> {
+        let id = conn.next_message_id();
         let mut splitter = MessageSplitter::new(M::KIND, id);
         msg.write(&mut splitter);
         let mut pkts = splitter
             .into_packet_iter()
-            .map(|(id, pkt)| self.send_wait_ack(id, pkt));
+            .map(|(id, pkt)| self.send_wait_ack(conn, id, pkt));
 
         //Must send the first packet and wait for ack
         match pkts.next() {
@@ -84,8 +100,8 @@ impl ReliableSocketInternal {
     }
 
     /// Repeatedly send the given packet via UDP while waiting for an ACK packet in response
-    async fn send_wait_ack(&self, id: PacketId, pkt: &[u8]) -> std::io::Result<()> {
-        let permit = self
+    async fn send_wait_ack(&self, conn: &ReliableSocketConnection, id: PacketId, pkt: &[u8]) -> std::io::Result<()> {
+        let permit = conn
             .congestion
             .permits
             .acquire()
@@ -95,28 +111,30 @@ impl ReliableSocketInternal {
         self.awaiting_ack.insert(id, wait_ack.clone());
 
         let mut send_time = Instant::now();
+        
+        let sock = self.get_sock(conn.remote.port())?;
 
         let resend = async {
             loop {
-                self.sock.send_to(pkt, self.remote).await?;
+                sock.send_to(pkt, conn.remote).await?;
                 send_time = Instant::now();
                 tokio::time::sleep(Duration::from_millis(
                     self.cfg.extra_wait_for_ack_ms as u64
-                        + self.congestion.rtt.load(Ordering::SeqCst) as u64,
+                        + conn.congestion.rtt.load(Ordering::SeqCst) as u64,
                 ))
                 .await;
 
-                let old_window = self.congestion.window.load(Ordering::SeqCst);
+                let old_window = conn.congestion.window.load(Ordering::SeqCst);
                 let window = old_window / 2;
 
                 if window > 0 {
-                    if let Ok(_) = self.congestion.window.compare_exchange(
+                    if let Ok(_) = conn.congestion.window.compare_exchange(
                         old_window,
                         window,
                         Ordering::SeqCst,
                         Ordering::Relaxed,
                     ) {
-                        self.congestion
+                        conn.congestion
                             .permits_to_remove
                             .fetch_add(window, Ordering::SeqCst);
                     }
@@ -126,20 +144,20 @@ impl ReliableSocketInternal {
 
         tokio::select! {
             _ = wait_ack.notified() => {
-                let to_remove = self.congestion.permits_to_remove.load(Ordering::SeqCst);
+                let to_remove = conn.congestion.permits_to_remove.load(Ordering::SeqCst);
                 if to_remove > 0 {
-                    if let Ok(_) = self.congestion.permits_to_remove.compare_exchange(to_remove, to_remove - 1, Ordering::SeqCst, Ordering::Relaxed) {
+                    if let Ok(_) = conn.congestion.permits_to_remove.compare_exchange(to_remove, to_remove - 1, Ordering::SeqCst, Ordering::Relaxed) {
                         permit.forget();
                     }
                 }
 
-                self.congestion.window.fetch_add(1, Ordering::SeqCst);
-                self.congestion.permits.add_permits(1);
+                conn.congestion.window.fetch_add(1, Ordering::SeqCst);
+                conn.congestion.permits.add_permits(1);
 
                 let rtt_measure = send_time.elapsed().as_millis() as u32;
-                let old_rtt = self.congestion.rtt.load(Ordering::Relaxed);
+                let old_rtt = conn.congestion.rtt.load(Ordering::Relaxed);
                 let new_rtt = ((RTT_ESTIMATION_ALPHA * 100) * old_rtt + (10 - RTT_ESTIMATION_ALPHA) * (rtt_measure * 100)) / 1000;
-                let _ = self.congestion.rtt.compare_exchange(old_rtt, new_rtt, Ordering::SeqCst, Ordering::Relaxed);
+                let _ = conn.congestion.rtt.compare_exchange(old_rtt, new_rtt, Ordering::SeqCst, Ordering::Relaxed);
 
 
                 Ok(())
@@ -154,7 +172,7 @@ impl ReliableSocketInternal {
     /// Send the given [Message] - this function performs NO message splitting, so the encoded
     /// size of `msg` MUST be less than BLOCK_SIZE - e.g. the message must
     /// be a control message (see [PacketKind](super::packet::PacketKind))
-    pub async fn send_single_raw<M: Message>(&self, id: PacketId, msg: M) -> std::io::Result<()> {
+    pub async fn send_single_raw<M: Message>(&self, addr: &SocketAddr, id: PacketId, msg: M) -> std::io::Result<()> {
         let encoded_sz = msg.size_hint();
         //allocate extra space in the packet buffer for the header
         let mut buf = BytesMut::with_capacity(msg.size_hint().unwrap_or(0) + HEADER_SZ);
@@ -175,23 +193,24 @@ impl ReliableSocketInternal {
         };
 
         header.write(&mut buf[..HEADER_SZ]);
-
-        self.sock.send_to(&buf, self.remote).await?;
-
+        
+        let sock = self.get_sock(addr.port())?;
+        sock.send_to(&buf, addr).await?;
+        
         Ok(())
     }
-
-    /// Get the next message ID by incrementing the atomic ID counter
-    pub fn next_message_id(&self) -> NonZeroU8 {
-        //Ensure that the counter rolls over 0
-        if let Ok(v) = self
-            .msgid
-            .compare_exchange(u8::MAX, 1, Ordering::SeqCst, Ordering::Relaxed)
-        {
-            NonZeroU8::new(v).expect("NoZeroU8 is 0?")
-        } else {
-            NonZeroU8::new(self.msgid.fetch_add(1, Ordering::SeqCst))
-                .expect("msgid counter reached 0")
+    
+    /// Lookup the socket bound to the given port, or log and return an error
+    fn get_sock(&self, port: u16) -> std::io::Result<dashmap::mapref::one::Ref<'_, u16, UdpSocket>> {
+        match self.socks.get(&port) {
+            Some(sock) => Ok(sock),
+            None => {
+                log::error!("Attempted to send a packet to an address with which no connection exists: port {}", port);
+                return Err(std::io::Error::new(
+                    ErrorKind::NotFound,
+                    "No connection found"
+                ))
+            }
         }
     }
 }

@@ -10,11 +10,12 @@ use std::{
 use dashmap::DashMap;
 pub(crate) use packet::PacketKind;
 pub use packet::{FromBytes, ToBytes};
+use parking_lot::Mutex;
 use tokio::{net::UdpSocket, sync::{Notify, mpsc::Receiver}};
 
 use self::{
-    packet::{ConnMessage, PacketId},
-    recv::ReliableSocketRecv,
+    packet::PacketId,
+    recv::{ReliableSocketRecv, FinishedMessage},
     tx::ReliableSocketCongestionControl,
 };
 
@@ -40,11 +41,26 @@ pub struct ReliableSocket {
     recvproc: tokio::task::JoinHandle<()>,
 }
 
+/// State maintained for each connection to a remote peer, created by a [ReliableSocket]
+#[derive(Debug)]
+pub struct ReliableSocketConnection {
+    /// A reference to the socket manager that handles actual tx and rx
+    internal: Arc<ReliableSocketInternal>,
+    /// Counter used to create IDs for transmitted messages
+    msgid: AtomicU8,
+    /// Address and port of the remote peer
+    remote: SocketAddr,
+    /// Channel that fully reassembled messages are sent to
+    recv: Mutex<Receiver<FinishedMessage>>,
+    /// Congestion control to limit the number of messages that may be sent
+    congestion: ReliableSocketCongestionControl,
+}
+
 /// Internal state for the [ReliableSocket], wrapped in an [Arc]
 #[derive(Debug)]
 pub(crate) struct ReliableSocketInternal {
-    /// The underlying UDP socket to send and receive with
-    sock: UdpSocket,
+    /// Map of ports to sockets that have been bound to them
+    socks: DashMap<u16, UdpSocket>,
     /// Runtime-configurable options for performance and rate limiting
     cfg: SocketConfig,
     /// Map of currently sent packets to their ack wakers
@@ -53,28 +69,14 @@ pub(crate) struct ReliableSocketInternal {
     recv: ReliableSocketRecv,
 }
 
-/// State maintained for each connection to a remote peer
-#[derive(Debug)]
-pub(crate) struct ReliableSocketConnectionInternal {
-    /// Counter used to create IDs for transmitted messages
-    msgid: AtomicU8,
-    /// Address and port of the remote peer
-    remote: SocketAddr,
-    /// Channel that fully reassembled messages are sent to
-    recv: Receiver<ReceivedMessage>,
-    /// Congestion control to limit the number of messages that may be sent
-    congestion: ReliableSocketCongestionControl,
-}
-
 
 impl ReliableSocket {
     /// Create a new socket that is not connected to any remote peer
-    pub async fn new(cfg: SocketConfig, port: u16) -> std::io::Result<Self> {
-        let sock = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)).await?;
+    pub async fn new(cfg: SocketConfig) -> Self {
         let recv = ReliableSocketRecv::new(&cfg);
 
         let internal = Arc::new(ReliableSocketInternal {
-            sock,
+            socks: DashMap::new(),
             cfg,
             awaiting_ack: DashMap::new(),
             recv,
@@ -82,24 +84,56 @@ impl ReliableSocket {
 
         let recvproc = internal.clone().spawn_recv_thread().await;
 
-        Ok(Self { internal, recvproc })
+        Self {
+            internal,
+            recvproc
+        }
     }
+    
+    /// Create a new connection to the given address
+    pub async fn connect(&self, addr: SocketAddr) -> std::io::Result<ReliableSocketConnection> {
+        let (sender, recv) = tokio::sync::mpsc::channel(16);
+        let recv = Mutex::new(recv);
 
-    pub async fn tunnel(&self) -> std::io::Result<()> {
-        self.send(ConnMessage).await?;
+        self.internal.recv.finished.insert(addr.ip(), sender);
+        
+        if !self.internal.socks.contains_key(&addr.port()) {
+            self.internal.socks.insert(
+                addr.port(),
+                UdpSocket::bind(SocketAddrV4::new(
+                    Ipv4Addr::UNSPECIFIED,
+                    addr.port()
+                )).await?
+            );
+        }
 
-        Ok(())
+        Ok(ReliableSocketConnection {
+            internal: self.internal.clone(),
+            msgid: AtomicU8::new(1),
+            remote: addr,
+            recv,
+            congestion: ReliableSocketCongestionControl::new(&self.internal.cfg),
+        })
     }
+}
 
-    /// Send the given message to a remote peer, may potentially block for some time as the peer
-    /// must respond with ACK packets for every packet that is sent
-    pub async fn send<M: Message>(&self, msg: M) -> std::io::Result<()> {
-        self.internal.send(msg).await
-    }
-
-    /// Wait for a peer to send a message to the host, and read the message bytes
+impl ReliableSocketConnection {
+    /// Await the reception of a message from the connected peer
     pub async fn recv(&self) -> ReceivedMessage {
-        self.internal.recv().await
+        if let Some(next) = self.recv.lock().recv().await {
+            //Return the permit tracking buffer space used
+            drop(next.permit);
+            next.msg
+        } else {
+            panic!("Message receiver channel closed");
+        }
+
+    }
+
+    /// Send the given message to the connected peer, returns an `Error` if writing to the socket
+    /// fails
+    pub async fn send<M: Message>(&self, msg: M) -> std::io::Result<()> {
+        self.internal.send(self, msg).await
     }
 }
 
