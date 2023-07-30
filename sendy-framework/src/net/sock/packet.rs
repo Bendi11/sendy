@@ -2,7 +2,7 @@ use std::{fmt, num::NonZeroU8};
 
 use bytes::{Buf, BufMut};
 
-use crate::net::msg::{Message, MessageKind};
+use crate::{net::msg::{Message, MessageKind}, ser::{FromBytes, ToBytes}};
 
 /// 'minimum maximum reassembly buffer size' guaranteed to be deliverable, minus IP and UDP headers
 pub(crate) const MAX_SAFE_UDP_PAYLOAD: usize = 500;
@@ -106,23 +106,6 @@ impl PacketKind {
     /// The tag to be used for the message tag with the lowest ID in the
     /// [MessageKind] enum
     pub const MSG_TAG_OFFSET: u8 = 3;
-}
-
-/// Trait to be implemented by all types that can be written to a byte buffer
-pub trait ToBytes: Sized {
-    /// Write the representation of this payload to a buffer of bytes
-    fn write<W: BufMut>(&self, buf: W);
-    /// Provide the encoded size in bytes of this value
-    fn size_hint(&self) -> Option<usize> {
-        None
-    }
-}
-
-/// Trait implemented by all types that may be parsed from a byte buffer
-pub trait FromBytes: Sized {
-    /// Read bytes the given buffer (multi-byte words should be little endian) to create an
-    /// instance of `Self`
-    fn parse<R: Buf>(buf: R) -> Result<Self, std::io::Error>;
 }
 
 impl ToBytes for PacketId {

@@ -10,14 +10,17 @@ use std::{
 use bytes::{buf::UninitSlice, BufMut, BytesMut};
 use tokio::{sync::{Notify, Semaphore}, net::UdpSocket};
 
-use crate::net::msg::Message;
+use crate::{
+    net::msg::Message,
+    ser::{ToBytes, FromBytes},
+};
 
 use super::{
     packet::{
         PacketHeader, PacketId, BLOCKID_OFFSET, BLOCK_SIZE, CHECKSUM_OFFSET, HEADER_SZ,
         MAX_SAFE_UDP_PAYLOAD,
     },
-    FromBytes, PacketKind, ReliableSocketInternal, SocketConfig, ToBytes, ReliableSocketConnection,
+    PacketKind, ReliableSocketInternal, SocketConfig, ReliableSocketConnection,
 };
 
 /// Sensitivity to the RTT measurement to new changes in the response time in 10ths of a ms
@@ -295,10 +298,7 @@ unsafe impl BufMut for MessageSplitter {
 
 #[cfg(test)]
 mod tests {
-    use crate::net::{
-        msg::{MessageKind, TestMessage},
-        sock::FromBytes,
-    };
+    use crate::net::msg::{TestMessage, MessageKind};
 
     use super::*;
 

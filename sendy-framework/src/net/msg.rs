@@ -1,6 +1,7 @@
 use bytes::{BufMut, Bytes};
 
-use super::sock::{FromBytes, PacketKind, ToBytes};
+use super::sock::PacketKind;
+use crate::ser::{ToBytes, FromBytes};
 
 /// An enumeration over all application layer messages that may be passed between nodes
 #[repr(u8)]

@@ -14,12 +14,15 @@ use tokio::sync::{
     OwnedSemaphorePermit, RwLock, Semaphore,
 };
 
-use crate::net::{
-    msg::{MessageKind, ReceivedMessage},
-    sock::{
-        packet::{PacketHeader, BLOCK_SIZE, HEADER_SZ},
-        FromBytes, PacketKind,
+use crate::{
+    net::{
+        msg::{MessageKind, ReceivedMessage},
+        sock::{
+            packet::{PacketHeader, BLOCK_SIZE, HEADER_SZ},
+            PacketKind,
+        },
     },
+    ser::FromBytes,
 };
 
 use super::{
