@@ -52,3 +52,34 @@ impl<T: FromBytes> FromBytes for Vec<T> {
             .collect::<Result<Self, _>>()
     }
 }
+
+macro_rules! integral_from_to_bytes {
+    ($type:ty: $get_method_name:ident, $put_method_name:ident) => {
+        impl ToBytes for $type {
+            fn write<B: BufMut>(&self, mut buf: B) {
+                buf.$put_method_name(*self)
+            }
+
+            fn size_hint(&self) -> Option<usize> {
+                Some(std::mem::size_of::<Self>())
+            }
+        }
+
+        impl FromBytes for $type {
+            fn parse<B: Buf>(mut buf: B) -> Result<Self, std::io::Error> {
+                Ok(buf.$get_method_name())
+            }
+        }
+    };
+}
+
+integral_from_to_bytes!{u8: get_u8, put_u8}
+integral_from_to_bytes!{u16: get_u16_le, put_u16_le}
+integral_from_to_bytes!{u32: get_u32_le, put_u32_le}
+integral_from_to_bytes!{u64: get_u64_le, put_u64_le}
+
+
+integral_from_to_bytes!{i8: get_i8, put_i8}
+integral_from_to_bytes!{i16: get_i16_le, put_i16_le}
+integral_from_to_bytes!{i32: get_i32_le, put_i32_le}
+integral_from_to_bytes!{i64: get_i64_le, put_i64_le}
