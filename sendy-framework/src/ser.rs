@@ -1,6 +1,7 @@
 //! Module defining traits for how rust types get serialized to bytes when transmitted
 
 use bytes::{BufMut, Buf};
+use rsa::{RsaPublicKey, pkcs8::{EncodePublicKey, DecodePublicKey}};
 
 /// Trait to be implemented by all types that can be written to a byte buffer
 pub trait ToBytes: Sized {
@@ -83,3 +84,42 @@ integral_from_to_bytes!{i8: get_i8, put_i8}
 integral_from_to_bytes!{i16: get_i16_le, put_i16_le}
 integral_from_to_bytes!{i32: get_i32_le, put_i32_le}
 integral_from_to_bytes!{i64: get_i64_le, put_i64_le}
+
+type RsaPublicKeyLen = u16;
+
+impl ToBytes for RsaPublicKey {
+    fn write<W: BufMut>(&self, mut buf: W) {
+        match self.to_public_key_der() {
+            Ok(der) => {
+                let bytes = der.as_bytes();
+                buf.put_u16_le(bytes.len() as RsaPublicKeyLen);
+                buf.put_slice(bytes);
+            },
+            Err(e) => {
+                log::error!(
+                    "Failed to encode RSA public key as PKCS#8 DER: {}",
+                    e,
+                );
+            }
+        }
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        self
+            .to_public_key_der()
+            .ok()
+            .map(|der| der.as_bytes().len())
+    }
+}
+
+impl FromBytes for RsaPublicKey {
+    fn parse<R: Buf>(mut buf: R) -> Result<Self, std::io::Error> {
+        let len = buf.get_u16_le();
+        let bytes = buf.copy_to_bytes(len as usize);
+
+        match RsaPublicKey::from_public_key_der(&bytes) {
+            Ok(pubkey) => Ok(pubkey),
+            Err(e) => Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, e)),
+        }
+    }
+}
