@@ -157,7 +157,7 @@ impl ReliableSocketInternal {
     ) -> std::io::Result<()> {
         let encoded_sz = msg.size_hint();
         //allocate extra space in the packet buffer for the header
-        let mut buf = BytesMut::with_capacity(msg.size_hint().unwrap_or(0) + HEADER_SZ);
+        let mut buf = Vec::with_capacity(msg.size_hint().unwrap_or(0) + HEADER_SZ);
 
         //Don't waste time writing nothing and calculating the checksum if there is no payload
         let checksum = if encoded_sz == Some(0) {
@@ -170,7 +170,7 @@ impl ReliableSocketInternal {
 
         let header = PacketHeader { kind, id, checksum };
 
-        header.write(&mut buf[..HEADER_SZ]);
+        header.write((&mut buf).limit(HEADER_SZ));
 
         let sock = self.get_sock(addr.port())?;
         sock.send_to(&buf, addr).await?;

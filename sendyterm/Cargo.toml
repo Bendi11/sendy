@@ -7,6 +7,6 @@ edition = "2021"
 tokio = { version = "1.29", features = ["net", "macros", "rt-multi-thread", "time", "sync"] }
 clap = { version = "4.3", features = ["derive"] }
 stderrlog = "0.5"
-log = { version = "0.4", features = ["release_max_level_warn"] }
+log = "0.4" #{ version = "0.4", features = ["release_max_level_warn"] }
 
 sendy-framework = { path = "../sendy-framework" }

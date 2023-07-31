@@ -3,7 +3,7 @@ use std::{
     io::ErrorKind,
     net::{IpAddr, SocketAddr},
     num::NonZeroU8,
-    sync::{self, atomic::AtomicU16, Arc},
+    sync::{self, atomic::AtomicU16, Arc}, time::Duration,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -93,6 +93,11 @@ impl ReliableSocketInternal {
     pub async fn spawn_recv_thread(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         tokio::task::spawn(async move {
             loop {
+                if self.socks.is_empty() {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue
+                }
+
                 let reads = self.socks.iter().map(|sock| {
                     Box::pin(async {
                         if let Err(e) = sock.readable().await {
