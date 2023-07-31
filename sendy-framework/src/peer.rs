@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use bytes::Bytes;
+use futures::Future;
 use tokio::sync::oneshot;
 
 use crate::{net::{sock::{ReliableSocketConnection, PacketKind}, msg::{ReceivedMessage, MessageKind}}, req::{Request, Response, StatefulToBytes}, ctx::Context, ser::ToBytes};
@@ -6,7 +9,7 @@ use crate::{net::{sock::{ReliableSocketConnection, PacketKind}, msg::{ReceivedMe
 
 /// A connection to a remote peer over UDP
 pub struct Peer {
-    conn: ReliableSocketConnection,
+    conn: Arc<ReliableSocketConnection>,
 }
 
 /// Structure implementing [ToBytes] that allows stateful conversions to bytes using the
@@ -20,7 +23,7 @@ impl Peer {
     /// Create a new peer connection using the given socket state
     pub(crate) fn new(conn: ReliableSocketConnection) -> Self {
         Self {
-            conn,
+            conn: Arc::new(conn),
         }
     }
 
@@ -32,12 +35,12 @@ impl Peer {
 
     /// Send the given request message and await a response from the remote
     #[inline]
-    pub async fn send_wait_response<R: Request>(
+    pub async fn send_wait_response<'a, R: Request>(
         &self,
-        ctx: &Context,
-        msg: R,
-    ) -> std::io::Result<oneshot::Receiver<Bytes>> {
-        ctx.socks.send_wait_response(&self.conn, R::KIND, ToBytesContext { ctx, val: &msg }).await
+        ctx: &'a Context,
+        msg: &'a R,
+    ) -> std::io::Result<impl Future<Output=Bytes> + 'a> {
+        ctx.socks.send_wait_response(&self.conn, R::KIND, ToBytesContext { ctx, val: msg }).await
     }
 
     /// Respond to the given request message with a payload only, no message kind needed

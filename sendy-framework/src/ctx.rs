@@ -30,10 +30,10 @@ impl Context {
     pub async fn connect(&self, peer: SocketAddr) -> std::io::Result<Peer> {
         let conn = self.socks.connect(peer).await?;
 
-        let peer = Arc::new(Peer::new(conn));
+        let peer = Peer::new(conn);
 
         let resp = peer
-                .send_wait_response(self, ConnectAuthenticateRequest)
+                .send_wait_response(self, &ConnectAuthenticateRequest)
                 .await
                 .unwrap();
 
@@ -45,13 +45,14 @@ impl Context {
                     peer.respond(self, &msg, ConnectAuthenticateResponse {
                         cert: self.certificate.clone(),
                     }).await.unwrap();
+                    break
                 }
             }
         };
 
 
         let resp = async {
-            let resp = resp.await.unwrap();
+            let resp = resp.await;
             let response = ConnectAuthenticateResponse::parse(
                 &mut untrusted::Reader::new(untrusted::Input::from(&resp))
             ).unwrap();
@@ -65,6 +66,6 @@ impl Context {
     
         tokio::join!(resp, send_own);
 
-        Ok(Arc::into_inner(peer).unwrap())
+        Ok(peer)
     }
 }

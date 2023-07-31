@@ -4,7 +4,6 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use bytes::{Buf, BufMut};
 
-
 /// Trait to be implemented by all types that can be written to a byte buffer
 pub trait ToBytes: Sized {
     /// Write the representation of this payload to a buffer of bytes
@@ -14,6 +13,13 @@ pub trait ToBytes: Sized {
     fn size_hint(&self) -> Option<usize> {
         None
     }
+    
+    /// Write the full representation of [self] to a vec of bytes
+    fn write_to_vec(&self) -> Vec<u8> {
+        let mut buf = Vec::<u8>::with_capacity(self.size_hint().unwrap_or(0));
+        self.write(&mut buf);
+        buf
+    }
 }
 
 /// Trait implemented by all types that may be parsed from a byte buffer that is sent in a message
@@ -22,6 +28,12 @@ pub trait FromBytes: Sized {
     /// Read bytes the given buffer (multi-byte words should be little endian) to create an
     /// instance of `Self`
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError>;
+    
+    /// Helper function to read an instance of [self] without needing to create [untrusted] types
+    fn read_from_slice(slice: &[u8]) -> Result<Self, FromBytesError> {
+        let mut reader = untrusted::Reader::new(untrusted::Input::from(slice));
+        Self::parse(&mut reader)
+    }
 }
 
 type VecToBytesLenType = u32;

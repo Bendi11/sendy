@@ -10,6 +10,7 @@ use std::{
 };
 
 use bytes::{buf::UninitSlice, BufMut, Bytes, BytesMut};
+use futures::Future;
 use tokio::{
     net::UdpSocket,
     sync::{oneshot, Notify, Semaphore},
@@ -80,12 +81,21 @@ impl ReliableSocketInternal {
         conn: &ReliableSocketConnection,
         kind: MessageKind,
         req: B,
-    ) -> std::io::Result<oneshot::Receiver<Bytes>> {
+    ) -> std::io::Result<impl Future<Output = Bytes>> {
         let msgid = conn.next_message_id();
         let recv = self.wait_response(conn.remote.ip(), msgid);
         self.send_with_id(conn, msgid, PacketKind::Message(kind), req)
             .await?;
-        Ok(recv)
+        
+        Ok(async {
+            match recv.await {
+                Ok(msg) => msg,
+                Err(e) => {
+                    log::error!("Failed to receieve response via channel: {}", e);
+                    std::process::exit(-1);
+                }
+            }
+        })
     }
 
     /// Send a message to the connected peer via UDP *without* waiting for a response message
