@@ -1,6 +1,7 @@
 use std::num::NonZeroU8;
 
 use bytes::Bytes;
+use rsa::RsaPublicKey;
 
 use super::sock::PacketKind;
 use crate::{ser::{FromBytes, FromBytesError, ToBytes}, req::{Request, Response}};
@@ -48,24 +49,21 @@ impl TryFrom<u8> for MessageKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct TestMessage(pub Vec<u8>);
+pub struct TestMessage(pub RsaPublicKey);
 
+impl Response for TestMessage {}
 impl Request for TestMessage {
     const KIND: MessageKind = MessageKind::Test;
 }
 
-impl Response for TestMessage {}
-
 impl FromBytes for TestMessage {
     fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        Ok(Self(
-            buf.read_bytes_to_end().as_slice_less_safe().to_owned(),
-        ))
+        Ok(Self(RsaPublicKey::parse(buf)?)) 
     }
 }
 
 impl ToBytes for TestMessage {
-    fn write<W: bytes::BufMut>(&self, mut buf: W) {
-        buf.put_slice(&self.0[..]);
+    fn write<W: bytes::BufMut>(&self, buf: W) {
+        self.0.write(buf)
     }
 }
