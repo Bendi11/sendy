@@ -1,7 +1,10 @@
 //! Module defining traits for how rust types get serialized to bytes when transmitted
 
-use bytes::{BufMut, Buf};
-use rsa::{RsaPublicKey, pkcs8::{EncodePublicKey, DecodePublicKey}};
+use bytes::{Buf, BufMut};
+use rsa::{
+    pkcs8::{DecodePublicKey, EncodePublicKey},
+    RsaPublicKey,
+};
 
 /// Trait to be implemented by all types that can be written to a byte buffer
 pub trait ToBytes: Sized {
@@ -22,7 +25,6 @@ pub trait FromBytes: Sized {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError>;
 }
 
-
 type VecToBytesLenType = u32;
 
 impl<T: ToBytes> ToBytes for Vec<T> {
@@ -37,10 +39,12 @@ impl<T: ToBytes> ToBytes for Vec<T> {
         let elements = self
             .iter()
             .map(|elem| elem.size_hint())
-            .fold(Some(0usize), |acc, elem| if let (Some(acc), Some(elem)) = (acc, elem) {
-                Some(acc + elem)
-            } else {
-                None
+            .fold(Some(0usize), |acc, elem| {
+                if let (Some(acc), Some(elem)) = (acc, elem) {
+                    Some(acc + elem)
+                } else {
+                    None
+                }
             });
 
         elements.map(|sz| sz + std::mem::size_of::<VecToBytesLenType>())
@@ -50,9 +54,7 @@ impl<T: ToBytes> ToBytes for Vec<T> {
 impl<T: FromBytes> FromBytes for Vec<T> {
     fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let len: VecToBytesLenType = VecToBytesLenType::parse(buf)?;
-        (0..len)
-            .map(|_| T::parse(buf))
-            .collect::<Result<Self, _>>()
+        (0..len).map(|_| T::parse(buf)).collect::<Result<Self, _>>()
     }
 }
 
@@ -77,16 +79,15 @@ macro_rules! integral_from_to_bytes {
     };
 }
 
-integral_from_to_bytes!{u8: get_u8, put_u8}
-integral_from_to_bytes!{u16: get_u16_le, put_u16_le}
-integral_from_to_bytes!{u32: get_u32_le, put_u32_le}
-integral_from_to_bytes!{u64: get_u64_le, put_u64_le}
+integral_from_to_bytes! {u8: get_u8, put_u8}
+integral_from_to_bytes! {u16: get_u16_le, put_u16_le}
+integral_from_to_bytes! {u32: get_u32_le, put_u32_le}
+integral_from_to_bytes! {u64: get_u64_le, put_u64_le}
 
-
-integral_from_to_bytes!{i8: get_i8, put_i8}
-integral_from_to_bytes!{i16: get_i16_le, put_i16_le}
-integral_from_to_bytes!{i32: get_i32_le, put_i32_le}
-integral_from_to_bytes!{i64: get_i64_le, put_i64_le}
+integral_from_to_bytes! {i8: get_i8, put_i8}
+integral_from_to_bytes! {i16: get_i16_le, put_i16_le}
+integral_from_to_bytes! {i32: get_i32_le, put_i32_le}
+integral_from_to_bytes! {i64: get_i64_le, put_i64_le}
 
 type RsaPublicKeyLenType = u16;
 
@@ -97,19 +98,15 @@ impl ToBytes for RsaPublicKey {
                 let bytes = der.as_bytes();
                 buf.put_u16_le(bytes.len() as RsaPublicKeyLenType);
                 buf.put_slice(bytes);
-            },
+            }
             Err(e) => {
-                log::error!(
-                    "Failed to encode RSA public key as PKCS#8 DER: {}",
-                    e,
-                );
+                log::error!("Failed to encode RSA public key as PKCS#8 DER: {}", e,);
             }
         }
     }
 
     fn size_hint(&self) -> Option<usize> {
-        self
-            .to_public_key_der()
+        self.to_public_key_der()
             .ok()
             .map(|der| der.as_bytes().len())
     }
@@ -129,7 +126,9 @@ impl FromBytes for RsaPublicKey {
 
 impl ToBytes for () {
     fn write<W: BufMut>(&self, _buf: W) {}
-    fn size_hint(&self) -> Option<usize> { Some(0) }
+    fn size_hint(&self) -> Option<usize> {
+        Some(0)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

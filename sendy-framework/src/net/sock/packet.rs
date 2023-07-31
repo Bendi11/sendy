@@ -2,7 +2,10 @@ use std::{fmt, num::NonZeroU8};
 
 use bytes::BufMut;
 
-use crate::{net::msg::{MessageKind}, ser::{FromBytes, ToBytes, FromBytesError}};
+use crate::{
+    net::msg::MessageKind,
+    ser::{FromBytes, FromBytesError, ToBytes},
+};
 
 /// 'minimum maximum reassembly buffer size' guaranteed to be deliverable, minus IP and UDP headers
 pub(crate) const MAX_SAFE_UDP_PAYLOAD: usize = 500;
@@ -100,9 +103,9 @@ impl ToBytes for PacketId {
 impl FromBytes for PacketId {
     fn parse(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
         let msgid = u8::parse(buf)?;
-        let msgid = NonZeroU8::new(msgid).ok_or_else(||
-                FromBytesError::Parsing("Packet ID with invalid message ID 0".to_owned()),
-        )?;
+        let msgid = NonZeroU8::new(msgid).ok_or_else(|| {
+            FromBytesError::Parsing("Packet ID with invalid message ID 0".to_owned())
+        })?;
 
         let blockid = u16::parse(buf)?;
         Ok(Self { msgid, blockid })

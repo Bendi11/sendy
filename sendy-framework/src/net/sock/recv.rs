@@ -1,7 +1,9 @@
 use std::{
     cmp::Ordering,
+    io::ErrorKind,
+    net::{IpAddr, SocketAddr},
     num::NonZeroU8,
-    sync::{self, atomic::AtomicU16, Arc}, net::{SocketAddr, IpAddr}, io::ErrorKind,
+    sync::{self, atomic::AtomicU16, Arc},
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -9,10 +11,7 @@ use dashmap::DashMap;
 use hibitset::AtomicBitSet;
 use parking_lot::Mutex;
 use slab::Slab;
-use tokio::sync::{
-    mpsc::Sender,
-    OwnedSemaphorePermit, RwLock, Semaphore, oneshot,
-};
+use tokio::sync::{mpsc::Sender, oneshot, OwnedSemaphorePermit, RwLock, Semaphore};
 
 use crate::{
     net::{
@@ -94,14 +93,16 @@ impl ReliableSocketInternal {
     pub async fn spawn_recv_thread(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         tokio::task::spawn(async move {
             loop {
-                let reads = self.socks.iter().map(|sock| Box::pin(async {
-                    if let Err(e) = sock.readable().await {
-                        log::error!("Failed to poll socket: {}", e);
-                        Err(*sock.key())
-                    } else {
-                        Ok(sock)
-                    }
-                }));
+                let reads = self.socks.iter().map(|sock| {
+                    Box::pin(async {
+                        if let Err(e) = sock.readable().await {
+                            log::error!("Failed to poll socket: {}", e);
+                            Err(*sock.key())
+                        } else {
+                            Ok(sock)
+                        }
+                    })
+                });
 
                 let (readable, ..) = futures::future::select_all(reads).await;
                 let readable = match readable {
@@ -109,7 +110,7 @@ impl ReliableSocketInternal {
                     Err(bad_idx) => {
                         drop(readable);
                         self.socks.remove(&bad_idx);
-                        continue
+                        continue;
                     }
                 };
 
@@ -118,7 +119,7 @@ impl ReliableSocketInternal {
                     Ok((read, addr)) => {
                         let this = self.clone();
                         this.handle_pkt(addr, read, buf).await;
-                    },
+                    }
                     //False positive - socket is not readable
                     Err(e) if e.kind() == ErrorKind::WouldBlock => (),
                     Err(e) => {
@@ -130,65 +131,68 @@ impl ReliableSocketInternal {
     }
 }
 
-
 impl ReliableSocketInternal {
     /// Create a new buffer in `messages` with enough storage capacity to copy all expected bytes
     /// of the message, waiting to acquire a permit for the expected size of the message
     async fn new_reassemble_buffer(&self, addr: &SocketAddr, id: PacketId, kind: MessageKind) {
         let expected_blocks = id.blockid;
-            let size_estimation = expected_blocks as usize * BLOCK_SIZE;
-            if size_estimation > self.cfg.max_recv_mem {
-                log::error!(
+        let size_estimation = expected_blocks as usize * BLOCK_SIZE;
+        if size_estimation > self.cfg.max_recv_mem {
+            log::error!(
                     "{}: Received message introduction packet that specifies {}B, but only have space for {}B",
                     addr,
                     size_estimation,
                     self.cfg.max_recv_mem,
                 );
 
-                return;
-            }
+            return;
+        }
 
-            let permit = self
-                .recv
-                .recv_buf_permit
-                .clone()
-                .acquire_many_owned(size_estimation as u32)
-                .await
-                .expect("Receive permits semaphore closed");
+        let permit = self
+            .recv
+            .recv_buf_permit
+            .clone()
+            .acquire_many_owned(size_estimation as u32)
+            .await
+            .expect("Receive permits semaphore closed");
 
-            //Fill a Vec with contiguous chunks of a buffer that can be individually locked
-            let mut blocks = Vec::with_capacity(expected_blocks as usize);
-            let mut tmp_buf = BytesMut::with_capacity(size_estimation);
-            for _ in 0..expected_blocks {
-                let rest = tmp_buf.split_off(BLOCK_SIZE);
-                blocks.push(Mutex::new(tmp_buf));
-                tmp_buf = rest;
-            }
+        //Fill a Vec with contiguous chunks of a buffer that can be individually locked
+        let mut blocks = Vec::with_capacity(expected_blocks as usize);
+        let mut tmp_buf = BytesMut::with_capacity(size_estimation);
+        for _ in 0..expected_blocks {
+            let rest = tmp_buf.split_off(BLOCK_SIZE);
+            blocks.push(Mutex::new(tmp_buf));
+            tmp_buf = rest;
+        }
 
-            let slot = RecvMessage {
-                permit,
-                kind,
-                msg_id: id.msgid,
-                blocks,
-                indexes: AtomicBitSet::new(),
-                expected_blocks,
-                received_blocks: AtomicU16::new(0),
-            };
+        let slot = RecvMessage {
+            permit,
+            kind,
+            msg_id: id.msgid,
+            blocks,
+            indexes: AtomicBitSet::new(),
+            expected_blocks,
+            received_blocks: AtomicU16::new(0),
+        };
 
-            {
-                let mut messages = self.recv.messages.write().await;
-                messages.insert(slot);
-            }
-
+        {
+            let mut messages = self.recv.messages.write().await;
+            messages.insert(slot);
+        }
     }
 
     /// Handle a packet received via UDP, reassembling the buffer, starting new message receptions,
     /// and sending ACKs when needed
-    async fn handle_pkt(self: Arc<Self>, addr: SocketAddr, received_bytes: usize, buf: [u8; MAX_SAFE_UDP_PAYLOAD]) {
+    async fn handle_pkt(
+        self: Arc<Self>,
+        addr: SocketAddr,
+        received_bytes: usize,
+        buf: [u8; MAX_SAFE_UDP_PAYLOAD],
+    ) {
         let reader = untrusted::Input::from(&buf[0..HEADER_SZ]);
         let header = match reader.read_all(
             FromBytesError::Parsing("Trailing bytes in packet header".to_owned()),
-            PacketHeader::parse
+            PacketHeader::parse,
         ) {
             Ok(header) => header,
             Err(e) => {
@@ -235,18 +239,23 @@ impl ReliableSocketInternal {
                 .any(|(_, m)| m.msg_id == header.id.msgid)
             {
                 self.send_ack(&addr, header.id).await;
-                return
+                return;
             };
-            
+
             //No task is waiting for a response message that was sent
-            if kind == MessageKind::Respond && !self.recv.responses.contains_key(&(addr.ip(), header.id.msgid)) {
+            if kind == MessageKind::Respond
+                && !self
+                    .recv
+                    .responses
+                    .contains_key(&(addr.ip(), header.id.msgid))
+            {
                 log::error!(
                     "Received response message for {} but there are no tasks awaiting the response",
                     header.id.msgid,
                 );
 
                 self.send_ack(&addr, header.id).await;
-                return
+                return;
             }
 
             self.new_reassemble_buffer(&addr, header.id, kind).await;
@@ -317,19 +326,21 @@ impl ReliableSocketInternal {
                 };
 
                 match finished.kind {
-                    MessageKind::Respond => match self.recv.responses.remove(&(addr.ip(), finished.msg_id)) {
-                        Some((_, response)) => {
-                            if let Err(_) = response.send(bytes) {
-                                log::error!("Failed to send response bytes to listener");
+                    MessageKind::Respond => {
+                        match self.recv.responses.remove(&(addr.ip(), finished.msg_id)) {
+                            Some((_, response)) => {
+                                if let Err(_) = response.send(bytes) {
+                                    log::error!("Failed to send response bytes to listener");
+                                }
                             }
-                        },
-                        None => {
-                            log::error!(
+                            None => {
+                                log::error!(
                                 "Received a response for message {} but there are no tasks waiting for it",
                                 finished.msg_id,
                             );
-                        },
-                    },
+                            }
+                        }
+                    }
                     _ => match self.recv.requests.get(&addr.ip()) {
                         Some(sender) => {
                             if let Err(e) = sender
@@ -341,16 +352,17 @@ impl ReliableSocketInternal {
                                         bytes,
                                     },
                                 })
-                                .await {
+                                .await
+                            {
                                 log::error!("Failed to send reassembled message to queue: {}", e);
                             }
-                        },
+                        }
                         None => {
                             log::error!("Finished message from {} but no connection is listening from that address", addr);
                         }
-                    }
+                    },
                 }
-            },
+            }
             Ordering::Greater => {
                 log::warn!(
                     "{}: Received {} blocks but expecting only {} - message dropped",

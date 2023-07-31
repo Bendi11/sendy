@@ -11,13 +11,16 @@ use bytes::Bytes;
 use dashmap::DashMap;
 pub(crate) use packet::PacketKind;
 use parking_lot::Mutex;
-use tokio::{net::UdpSocket, sync::{Notify, mpsc::Receiver, oneshot}};
+use tokio::{
+    net::UdpSocket,
+    sync::{mpsc::Receiver, oneshot, Notify},
+};
 
 use crate::net::msg::MessageKind;
 
 use self::{
     packet::PacketId,
-    recv::{ReliableSocketRecv, FinishedMessage},
+    recv::{FinishedMessage, ReliableSocketRecv},
     tx::ReliableSocketCongestionControl,
 };
 
@@ -71,7 +74,6 @@ pub(crate) struct ReliableSocketInternal {
     recv: ReliableSocketRecv,
 }
 
-
 impl ReliableSocket {
     /// Create a new socket that is not connected to any remote peer
     pub async fn new(cfg: SocketConfig) -> Self {
@@ -86,26 +88,20 @@ impl ReliableSocket {
 
         let recvproc = internal.clone().spawn_recv_thread().await;
 
-        Self {
-            internal,
-            recvproc
-        }
+        Self { internal, recvproc }
     }
-    
+
     /// Create a new connection to the given address
     pub async fn connect(&self, addr: SocketAddr) -> std::io::Result<ReliableSocketConnection> {
         let (sender, recv) = tokio::sync::mpsc::channel(16);
         let recv = Mutex::new(recv);
 
         self.internal.recv.requests.insert(addr.ip(), sender);
-        
+
         if !self.internal.socks.contains_key(&addr.port()) {
             self.internal.socks.insert(
                 addr.port(),
-                UdpSocket::bind(SocketAddrV4::new(
-                    Ipv4Addr::UNSPECIFIED,
-                    addr.port()
-                )).await?
+                UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, addr.port())).await?,
             );
         }
 
@@ -130,22 +126,37 @@ impl ReliableSocketConnection {
             panic!("Message receiver channel closed");
         }
     }
-    
+
     /// Send the given request message and await a response from the remote
-    pub async fn send_wait_response<R: Request>(&self, msg: R)
-        -> std::io::Result<oneshot::Receiver<Bytes>> {
+    pub async fn send_wait_response<R: Request>(
+        &self,
+        msg: R,
+    ) -> std::io::Result<oneshot::Receiver<Bytes>> {
         self.internal.send_wait_response(self, msg).await
     }
-    
+
     /// Respond to the given request message with a payload only, no message kind needed
-    pub async fn respond<R: Response>(&self, req: &ReceivedMessage, response: R) -> std::io::Result<()> {
-        self.internal.send_with_id(self, req.id, PacketKind::Message(MessageKind::Respond), response).await
+    pub async fn respond<R: Response>(
+        &self,
+        req: &ReceivedMessage,
+        response: R,
+    ) -> std::io::Result<()> {
+        self.internal
+            .send_with_id(
+                self,
+                req.id,
+                PacketKind::Message(MessageKind::Respond),
+                response,
+            )
+            .await
     }
 
     /// Send the given message to the connected peer, returns an `Error` if writing to the socket
     /// fails
     pub async fn send<R: Request>(&self, msg: R) -> std::io::Result<()> {
-        self.internal.send(self, PacketKind::Message(R::KIND), msg).await
+        self.internal
+            .send(self, PacketKind::Message(R::KIND), msg)
+            .await
     }
 }
 

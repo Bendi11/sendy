@@ -1,10 +1,6 @@
-use std::{net::{SocketAddrV4, SocketAddr}, time::Duration};
+use std::{net::SocketAddrV4, time::Duration};
 
 use clap::Parser;
-use sendy_framework::net::{
-    msg::TestMessage,
-    sock::{SocketConfig},
-};
 
 /// Test UDP connection on local network
 #[derive(Parser, Debug)]
@@ -22,7 +18,7 @@ async fn main() {
         .init()
         .unwrap();
 
-    let args = Args::parse();
+    let _args = Args::parse();
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 }

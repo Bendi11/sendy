@@ -3,14 +3,14 @@ use std::num::NonZeroU8;
 use bytes::Bytes;
 
 use super::sock::PacketKind;
-use crate::ser::{ToBytes, FromBytes, FromBytesError};
+use crate::ser::{FromBytes, FromBytesError, ToBytes};
 
 /// An enumeration over all application layer messages that may be passed between nodes
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MessageKind {
     Test = PacketKind::MSG_TAG_OFFSET,
-    /// Signals that the following message introduction is in response to an already-sent message - 
+    /// Signals that the following message introduction is in response to an already-sent message -
     /// the message ID of the packet is the message that this is reponding to
     Respond = PacketKind::MSG_TAG_OFFSET + 1,
     /// Transfer authentication public key + certificate and encryption public key
@@ -45,7 +45,10 @@ impl TryFrom<u8> for MessageKind {
             Some(1) => Self::Respond,
             Some(2) => Self::AuthConnect,
             _ => {
-                return Err(FromBytesError::Parsing(format!("Invalid message kind {:X}", value)))
+                return Err(FromBytesError::Parsing(format!(
+                    "Invalid message kind {:X}",
+                    value
+                )))
             }
         })
     }
@@ -63,7 +66,7 @@ impl Response for TestMessage {}
 impl FromBytes for TestMessage {
     fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         Ok(Self(
-            buf.read_bytes_to_end().as_slice_less_safe().to_owned()
+            buf.read_bytes_to_end().as_slice_less_safe().to_owned(),
         ))
     }
 }

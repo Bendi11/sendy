@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use rsa::{pkcs1v15::{SigningKey, DecryptingKey}, sha2::Sha256};
+use rsa::{
+    pkcs1v15::{DecryptingKey, SigningKey},
+    sha2::Sha256,
+};
 
 use crate::net::sock::ReliableSocket;
 
