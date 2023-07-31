@@ -260,7 +260,6 @@ impl ToBytes for RsaPublicKey {
 impl FromBytes for RsaPublicKey {
     fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let len = u16::parse(buf)?;
-        println!("len: {}", len);
         let bytes = buf.read_bytes(len as usize)?;
 
         match RsaPublicKey::from_public_key_der(bytes.as_slice_less_safe()) {

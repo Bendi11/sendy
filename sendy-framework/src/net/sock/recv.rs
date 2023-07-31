@@ -339,8 +339,6 @@ impl ReliableSocketInternal {
                 Bytes::new()
             };
 
-            log::trace!("{:x?}", bytes);
-
             match finished.kind {
                 MessageKind::Respond => {
                     match self.recv.responses.remove(&(addr.ip(), finished.msg_id)) {
