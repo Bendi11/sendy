@@ -42,7 +42,9 @@ impl Context {
             loop {
                 let msg = peer.recv().await;
                 if msg.kind == MessageKind::AuthConnect {
-                    peer.respond(self, &msg, TestMessage(self.keychain.public())).await.unwrap();
+                    peer.respond(self, &msg, ConnectAuthenticateResponse {
+                        cert: self.certificate.clone(),
+                    }).await.unwrap();
                 }
             }
         };
@@ -50,21 +52,13 @@ impl Context {
 
         let resp = async {
             let resp = resp.await.unwrap();
-            let response = TestMessage::parse(
+            let response = ConnectAuthenticateResponse::parse(
                 &mut untrusted::Reader::new(untrusted::Input::from(&resp))
-            );
-            
-            let resp = match response {
-                Ok(v) => v,
-                Err(e) => {
-                    for byte in resp {
-                        print!("{:0X} ", byte);
-                    }
-                    
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                    panic!()
-                }
-            };
+            ).unwrap();
+
+            if response.cert.verify(&response.cert.cert().keychain().auth) {
+                log::trace!("IT IS VALID!");
+            }
 
             println!("GOT KEY");
         };

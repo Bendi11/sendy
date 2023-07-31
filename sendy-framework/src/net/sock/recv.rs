@@ -166,8 +166,8 @@ impl ReliableSocketInternal {
         let mut tmp_buf = BytesMut::with_capacity(size_estimation);
         for _ in 0..expected_blocks {
             let rest = tmp_buf.split_off(BLOCK_SIZE);
-            blocks.push(Mutex::new(tmp_buf));
-            tmp_buf = rest;
+            let block = std::mem::replace(&mut tmp_buf, rest);
+            blocks.push(Mutex::new(block));
         }
 
         let slot = RecvMessage {
@@ -328,21 +328,18 @@ impl ReliableSocketInternal {
             let mut finished = self.recv.messages.write().await.remove(idx);
 
             let bytes = if finished.blocks.len() > 0 {
-                let first_block = finished.blocks.swap_remove(0).into_inner();
-
-                let reassemble =
-                    finished
-                        .blocks
-                        .into_iter()
-                        .fold(first_block, |mut acc, block| {
-                            acc.unsplit(block.into_inner());
-                            acc
-                        });
+                let mut reassemble = finished.blocks.remove(0).into_inner();
+                
+                for block in finished.blocks.into_iter() {
+                    reassemble.unsplit(block.into_inner());
+                }
 
                 reassemble.freeze()
             } else {
                 Bytes::new()
             };
+
+            log::trace!("{:x?}", bytes);
 
             match finished.kind {
                 MessageKind::Respond => {
