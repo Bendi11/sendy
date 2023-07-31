@@ -26,7 +26,7 @@ use crate::{
 };
 
 use super::{
-    packet::{AckMessage, PacketId, MAX_SAFE_UDP_PAYLOAD},
+    packet::{PacketId, MAX_SAFE_UDP_PAYLOAD},
     ReliableSocketInternal, SocketConfig,
 };
 
