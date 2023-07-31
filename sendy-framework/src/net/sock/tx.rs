@@ -16,8 +16,7 @@ use tokio::{
 };
 
 use crate::{
-    net::msg::Request,
-    ser::{FromBytes, ToBytes},
+    ser::{FromBytes, ToBytes}, net::msg::MessageKind,
 };
 
 use super::{
@@ -76,14 +75,15 @@ impl ReliableSocketConnection {
 impl ReliableSocketInternal {
     /// Send a message via UDP to the connected peer of `conn`, returning a channel that will send
     /// a value when the peer responds
-    pub async fn send_wait_response<R: Request>(
+    pub async fn send_wait_response<B: ToBytes>(
         &self,
         conn: &ReliableSocketConnection,
-        req: R,
+        kind: MessageKind,
+        req: B,
     ) -> std::io::Result<oneshot::Receiver<Bytes>> {
         let msgid = conn.next_message_id();
         let recv = self.wait_response(conn.remote.ip(), msgid);
-        self.send_with_id(conn, msgid, PacketKind::Message(R::KIND), req)
+        self.send_with_id(conn, msgid, PacketKind::Message(kind), req)
             .await?;
         Ok(recv)
     }

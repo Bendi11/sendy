@@ -16,7 +16,7 @@ use tokio::{
     sync::{mpsc::Receiver, oneshot, Notify},
 };
 
-use crate::net::msg::MessageKind;
+use crate::{net::msg::MessageKind, req::{Request, Response}};
 
 use self::{
     packet::PacketId,
@@ -24,7 +24,7 @@ use self::{
     tx::ReliableSocketCongestionControl,
 };
 
-use super::msg::{ReceivedMessage, Request, Response};
+use super::msg::{ReceivedMessage};
 
 /// Configuration options for a socket connection
 #[derive(Debug)]
@@ -132,7 +132,7 @@ impl ReliableSocketConnection {
         &self,
         msg: R,
     ) -> std::io::Result<oneshot::Receiver<Bytes>> {
-        self.internal.send_wait_response(self, msg).await
+        self.internal.send_wait_response(self, R::KIND, msg).await
     }
 
     /// Respond to the given request message with a payload only, no message kind needed

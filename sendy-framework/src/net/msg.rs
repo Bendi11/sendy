@@ -3,7 +3,7 @@ use std::num::NonZeroU8;
 use bytes::Bytes;
 
 use super::sock::PacketKind;
-use crate::ser::{FromBytes, FromBytesError, ToBytes};
+use crate::{ser::{FromBytes, FromBytesError, ToBytes}, req::{Request, Response}};
 
 /// An enumeration over all application layer messages that may be passed between nodes
 #[repr(u8)]
@@ -28,13 +28,6 @@ pub struct ReceivedMessage {
     /// The payload of the message
     pub bytes: Bytes,
 }
-
-/// Trait satisfied by all types that can be serialized to bytes and sent to other nodes
-pub trait Request: ToBytes + FromBytes {
-    const KIND: MessageKind;
-}
-
-pub trait Response: ToBytes + FromBytes {}
 
 impl TryFrom<u8> for MessageKind {
     type Error = FromBytesError;
