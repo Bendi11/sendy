@@ -308,66 +308,10 @@ impl ReliableSocketInternal {
         self.send_ack(&addr, header.id).await;
 
         let received_blocks_count = msg.received_blocks.load(sync::atomic::Ordering::SeqCst);
-        match received_blocks_count.cmp(&msg.expected_blocks) {
-            Ordering::Equal => {
-                drop(messages);
-                let mut finished = self.recv.messages.write().await.remove(idx);
-
-                let bytes = if finished.blocks.len() > 0 {
-                    let first_block = finished.blocks.swap_remove(0).into_inner();
-
-                    let reassemble =
-                        finished
-                            .blocks
-                            .into_iter()
-                            .fold(first_block, |mut acc, block| {
-                                acc.unsplit(block.into_inner());
-                                acc
-                            });
-
-                    reassemble.freeze()
-                } else {
-                    Bytes::new()
-                };
-
-                match finished.kind {
-                    MessageKind::Respond => {
-                        match self.recv.responses.remove(&(addr.ip(), finished.msg_id)) {
-                            Some((_, response)) => {
-                                if let Err(_) = response.send(bytes) {
-                                    log::error!("Failed to send response bytes to listener");
-                                }
-                            }
-                            None => {
-                                log::error!(
-                                "Received a response for message {} but there are no tasks waiting for it",
-                                finished.msg_id,
-                            );
-                            }
-                        }
-                    }
-                    _ => match self.recv.requests.get(&addr.ip()) {
-                        Some(sender) => {
-                            if let Err(e) = sender
-                                .send(FinishedMessage {
-                                    permit: finished.permit,
-                                    msg: ReceivedMessage {
-                                        kind: finished.kind,
-                                        id: finished.msg_id,
-                                        bytes,
-                                    },
-                                })
-                                .await
-                            {
-                                log::error!("Failed to send reassembled message to queue: {}", e);
-                            }
-                        }
-                        None => {
-                            log::error!("Finished message from {} but no connection is listening from that address", addr);
-                        }
-                    },
-                }
-            }
+        let finished = match received_blocks_count.cmp(&msg.expected_blocks) {
+            Ordering::Equal => true,
+            Ordering::Less if msg.expected_blocks == 1 => true,
+            Ordering::Less => false,
             Ordering::Greater => {
                 log::warn!(
                     "{}: Received {} blocks but expecting only {} - message dropped",
@@ -375,8 +319,68 @@ impl ReliableSocketInternal {
                     received_blocks_count,
                     msg.expected_blocks,
                 );
+                true
             }
-            Ordering::Less => (),
+        };
+
+        if finished {
+            drop(messages);
+            let mut finished = self.recv.messages.write().await.remove(idx);
+
+            let bytes = if finished.blocks.len() > 0 {
+                let first_block = finished.blocks.swap_remove(0).into_inner();
+
+                let reassemble =
+                    finished
+                        .blocks
+                        .into_iter()
+                        .fold(first_block, |mut acc, block| {
+                            acc.unsplit(block.into_inner());
+                            acc
+                        });
+
+                reassemble.freeze()
+            } else {
+                Bytes::new()
+            };
+
+            match finished.kind {
+                MessageKind::Respond => {
+                    match self.recv.responses.remove(&(addr.ip(), finished.msg_id)) {
+                        Some((_, response)) => {
+                            if let Err(_) = response.send(bytes) {
+                                log::error!("Failed to send response bytes to listener");
+                            }
+                        }
+                        None => {
+                            log::error!(
+                            "Received a response for message {} but there are no tasks waiting for it",
+                            finished.msg_id,
+                        );
+                        }
+                    }
+                }
+                _ => match self.recv.requests.get(&addr.ip()) {
+                    Some(sender) => {
+                        if let Err(e) = sender
+                            .send(FinishedMessage {
+                                permit: finished.permit,
+                                msg: ReceivedMessage {
+                                    kind: finished.kind,
+                                    id: finished.msg_id,
+                                    bytes,
+                                },
+                            })
+                            .await
+                        {
+                            log::error!("Failed to send reassembled message to queue: {}", e);
+                        }
+                    }
+                    None => {
+                        log::error!("Finished message from {} but no connection is listening from that address", addr);
+                    }
+                },
+            }
         }
     }
 

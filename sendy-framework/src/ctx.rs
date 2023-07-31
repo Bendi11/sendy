@@ -1,4 +1,4 @@
-use std::{net::{IpAddr, SocketAddr}, sync::Arc};
+use std::{net::{IpAddr, SocketAddr}, sync::Arc, time::Duration};
 
 use crate::{net::{sock::ReliableSocket, msg::MessageKind}, model::crypto::{PrivateKeychain, SignedCertificate}, peer::Peer, req::{ConnectAuthenticateRequest, ConnectAuthenticateResponse}, ser::FromBytes};
 
@@ -31,25 +31,17 @@ impl Context {
         let conn = self.socks.connect(peer).await?;
 
         let peer = Arc::new(Peer::new(conn));
-        let resp = peer.send_wait_response(self, ConnectAuthenticateRequest).await.unwrap().await.unwrap();
-        
 
-        let p2 = peer.clone();
-        let resp = async {
-            let resp = ConnectAuthenticateResponse::parse(
-                &mut untrusted::Reader::new(untrusted::Input::from(&resp))
-            ).unwrap();
+        let resp = peer
+                .send_wait_response(self, ConnectAuthenticateRequest)
+                .await
+                .unwrap();
 
-            if !resp.cert.verify(&resp.cert.cert().keychain().auth) {
-                log::error!("Invalid cert");
-            } else {
-                log::error!("Got certificate {:?}", resp.cert);
-            }
-        };
-        
+
         let send_own = async {
             loop {
                 let msg = peer.recv().await;
+                log::trace!("recv");
                 if msg.kind == MessageKind::AuthConnect {
                     log::trace!("RESPONDING");
                     peer.respond(self, &msg, ConnectAuthenticateResponse {
@@ -59,6 +51,36 @@ impl Context {
             }
         };
 
+
+        let resp = async {
+            let resp = resp.await.unwrap();
+            let response = ConnectAuthenticateResponse::parse(
+                &mut untrusted::Reader::new(untrusted::Input::from(&resp))
+            );
+            
+            let resp = match response {
+                Ok(v) => v,
+                Err(e) => {
+                    log::error!("FUCK: {}", e);
+                    log::error!("message:");
+                    for byte in resp {
+                        print!("{:0X} ", byte);
+                    }
+
+                    println!("\n\nFUCK");
+                    
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    panic!()
+                }
+            };
+
+            if !resp.cert.verify(&resp.cert.cert().keychain().auth) {
+                log::error!("Invalid cert");
+            } else {
+                log::error!("Got certificate {:?}", resp.cert);
+            }
+        };
+    
         tokio::join!(resp, send_own);
 
         Ok(Arc::into_inner(peer).unwrap())

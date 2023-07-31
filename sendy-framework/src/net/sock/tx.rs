@@ -316,7 +316,7 @@ impl MessageSplitter {
             kind,
             id: PacketId {
                 msgid: self.msgid,
-                blockid: self.blockid,
+                blockid: if self.bytes_till_split == MAX_SAFE_UDP_PAYLOAD - HEADER_SZ { 0 } else { self.blockid },
             },
             //Checksum is a placeholder until the full packet is written
             checksum: 0,
