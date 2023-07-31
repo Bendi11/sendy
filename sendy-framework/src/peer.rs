@@ -1,15 +1,22 @@
-use std::sync::Arc;
+use std::ops::Deref;
 
 use bytes::Bytes;
 use futures::Future;
-use tokio::sync::oneshot;
 
-use crate::{net::{sock::{ReliableSocketConnection, PacketKind}, msg::{ReceivedMessage, MessageKind}}, req::{Request, Response, StatefulToBytes}, ctx::Context, ser::ToBytes};
+use crate::{net::{sock::{ReliableSocketConnection, PacketKind}, msg::{ReceivedMessage, MessageKind}}, req::{Request, Response, StatefulToBytes}, ctx::Context, ser::ToBytes, model::crypto::SignedCertificate};
 
-
-/// A connection to a remote peer over UDP
+/// A connection to a remote peer over UDP, with state retrieved from a connection handshake
 pub struct Peer {
-    conn: Arc<ReliableSocketConnection>,
+    pub(crate) conn: PeerConnection,
+    /// The certificate of this peer, including public keys that can be used to encrypt and
+    /// validate messages the peer sends
+    pub(crate) cert: SignedCertificate,
+}
+
+/// A connection to a remote peer over UDP allowing two-way communication with the peer, see [Peer]
+/// for a structure that also contains state retrieved in a connection handshake
+pub struct PeerConnection {
+    conn: ReliableSocketConnection,
 }
 
 /// Structure implementing [ToBytes] that allows stateful conversions to bytes using the
@@ -20,10 +27,25 @@ struct ToBytesContext<'a, 'b, T: StatefulToBytes> {
 }
 
 impl Peer {
+    /// Get the signed certificate of this peer
+    pub const fn certificate(&self) -> &SignedCertificate {
+        &self.cert
+    }
+}
+
+impl Deref for Peer {
+    type Target = PeerConnection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.conn
+    }
+}
+
+impl PeerConnection {
     /// Create a new peer connection using the given socket state
     pub(crate) fn new(conn: ReliableSocketConnection) -> Self {
         Self {
-            conn: Arc::new(conn),
+            conn,
         }
     }
 
@@ -70,7 +92,6 @@ impl Peer {
             .send(&self.conn, PacketKind::Message(R::KIND), ToBytesContext { ctx, val: &msg })
             .await
     }
-
 }
 
 impl<'a, 'b, T: StatefulToBytes> ToBytes for ToBytesContext<'a, 'b, T> {

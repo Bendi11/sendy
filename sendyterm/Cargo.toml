@@ -4,9 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1.29", features = ["net", "macros", "rt-multi-thread", "time", "sync"] }
+tokio = { version = "1.29", features = ["net", "macros", "rt-multi-thread"] }
 clap = { version = "4.3", features = ["derive"] }
 stderrlog = "0.5"
-log = "0.4" #{ version = "0.4", features = ["release_max_level_warn"] }
+log = { version = "0.4", features = ["release_max_level_warn"] }
+secret-service = { version = "3.0", features = ["rt-tokio-crypto-rust"] }
+async-trait = "0.1"
+futures = "0.3"
 
 sendy-framework = { path = "../sendy-framework" }

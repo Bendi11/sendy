@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 
 use bytes::BufMut;
-use rsa::{sha2::Sha256, pkcs1v15::{DecryptingKey, SigningKey, VerifyingKey, Signature}, RsaPublicKey, pkcs8::{EncodePublicKey, DecodePublicKey}, signature::{SignatureEncoding, Signer}, RsaPrivateKey};
+use rsa::{sha2::Sha256, pkcs1v15::{SigningKey, VerifyingKey, Signature}, RsaPublicKey, pkcs8::{EncodePublicKey, DecodePublicKey, EncodePrivateKey, DecodePrivateKey}, signature::{SignatureEncoding, Signer}, RsaPrivateKey};
 
 use crate::ser::{FromBytes, ToBytes, FromBytesError};
 
@@ -11,9 +11,9 @@ use crate::ser::{FromBytes, ToBytes, FromBytesError};
 #[derive(Debug)]
 pub struct PrivateKeychain {
     /// RSA keys used to sign messages that have been sent
-    pub(crate) auth: SigningKey<Sha256>,
+    pub auth: SigningKey<Sha256>,
     /// RSA keys used to encrypt and decrypt messages for symmetric session key transfers
-    pub(crate) enc: RsaPrivateKey,
+    pub enc: RsaPrivateKey,
 }
 
 /// A collection of public keys that are used to verify digitally signed messages and encrypt
@@ -283,5 +283,34 @@ impl<D: rsa::sha2::Digest> ToBytes for VerifyingKey<D> {
 impl FromBytes for VerifyingKey<Sha256> {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         Ok(Self::new(RsaPublicKey::parse(reader)?))
+    }
+}
+
+impl ToBytes for RsaPrivateKey {
+    fn write<W: BufMut>(&self, mut buf: W) {
+        let der = match self.to_pkcs8_der() {
+            Ok(der) => der,
+            Err(e) => {
+                log::error!("Failed to encode RSA public key as DER: {}", e);
+                0u16.write(buf);
+                return
+            }
+        };
+        
+        let der = der.as_bytes();
+        (der.len() as u16).write(&mut buf);
+        buf.put_slice(der);
+    }
+}
+
+impl FromBytes for RsaPrivateKey {
+    fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let len = u16::parse(buf)?;
+        let bytes = buf.read_bytes(len as usize)?;
+
+        match RsaPrivateKey::from_pkcs8_der(bytes.as_slice_less_safe()) {
+            Ok(pubkey) => Ok(pubkey),
+            Err(e) => Err(FromBytesError::Parsing(e.to_string())),
+        }
     }
 }
