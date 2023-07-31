@@ -11,7 +11,7 @@ use crate::net::sock::ReliableSocket;
 #[derive(Debug)]
 pub struct Context {
     /// Manager for all peer connections
-    socks: Arc<ReliableSocket>,
+    pub(crate) socks: Arc<ReliableSocket>,
     /// Collection of the host's crypto keys
     keychain: Keychain,
 }

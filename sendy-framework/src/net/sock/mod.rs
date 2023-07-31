@@ -4,10 +4,9 @@ mod tx;
 
 use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    sync::{atomic::AtomicU8, Arc},
+    sync::{atomic::AtomicU8, Arc}, ops::Deref,
 };
 
-use bytes::Bytes;
 use dashmap::DashMap;
 pub(crate) use packet::PacketKind;
 use parking_lot::Mutex;
@@ -16,15 +15,13 @@ use tokio::{
     sync::{mpsc::Receiver, oneshot, Notify},
 };
 
-use crate::{net::msg::MessageKind, req::{Request, Response}};
-
 use self::{
     packet::PacketId,
     recv::{FinishedMessage, ReliableSocketRecv},
     tx::ReliableSocketCongestionControl,
 };
 
-use super::msg::{ReceivedMessage};
+use super::msg::ReceivedMessage;
 
 /// Configuration options for a socket connection
 #[derive(Debug)]
@@ -49,8 +46,6 @@ pub(crate) struct ReliableSocket {
 /// State maintained for each connection to a remote peer, created by a [ReliableSocket]
 #[derive(Debug)]
 pub(crate) struct ReliableSocketConnection {
-    /// A reference to the socket manager that handles actual tx and rx
-    internal: Arc<ReliableSocketInternal>,
     /// Address and port of the remote peer
     remote: SocketAddr,
     /// Counter used to create IDs for transmitted messages
@@ -72,6 +67,19 @@ pub(crate) struct ReliableSocketInternal {
     awaiting_ack: DashMap<PacketId, Arc<Notify>>,
     /// Receiving arm of this socket
     recv: ReliableSocketRecv,
+}
+
+impl ReliableSocketConnection {
+    /// Await the next message being fully reassembled
+    pub async fn recv(&self) -> ReceivedMessage {
+        if let Some(next) = self.recv.lock().recv().await {
+            //Return the permit tracking buffer space used
+            drop(next.permit);
+            next.msg
+        } else {
+            panic!("Message receiver channel closed");
+        }
+    }
 }
 
 impl ReliableSocket {
@@ -106,7 +114,6 @@ impl ReliableSocket {
         }
 
         Ok(ReliableSocketConnection {
-            internal: self.internal.clone(),
             msgid: AtomicU8::new(1),
             remote: addr,
             recv,
@@ -115,48 +122,17 @@ impl ReliableSocket {
     }
 }
 
-impl ReliableSocketConnection {
-    /// Await the reception of a request from the connected peer
-    pub async fn recv(&self) -> ReceivedMessage {
-        if let Some(next) = self.recv.lock().recv().await {
-            //Return the permit tracking buffer space used
-            drop(next.permit);
-            next.msg
-        } else {
-            panic!("Message receiver channel closed");
-        }
+impl AsRef<ReliableSocketInternal> for ReliableSocket {
+    fn as_ref(&self) -> &ReliableSocketInternal {
+        &self.internal
     }
+}
 
-    /// Send the given request message and await a response from the remote
-    pub async fn send_wait_response<R: Request>(
-        &self,
-        msg: R,
-    ) -> std::io::Result<oneshot::Receiver<Bytes>> {
-        self.internal.send_wait_response(self, R::KIND, msg).await
-    }
+impl Deref for ReliableSocket {
+    type Target = ReliableSocketInternal;
 
-    /// Respond to the given request message with a payload only, no message kind needed
-    pub async fn respond<R: Response>(
-        &self,
-        req: &ReceivedMessage,
-        response: R,
-    ) -> std::io::Result<()> {
-        self.internal
-            .send_with_id(
-                self,
-                req.id,
-                PacketKind::Message(MessageKind::Respond),
-                response,
-            )
-            .await
-    }
-
-    /// Send the given message to the connected peer, returns an `Error` if writing to the socket
-    /// fails
-    pub async fn send<R: Request>(&self, msg: R) -> std::io::Result<()> {
-        self.internal
-            .send(self, PacketKind::Message(R::KIND), msg)
-            .await
+    fn deref(&self) -> &Self::Target {
+        &self.internal
     }
 }
 

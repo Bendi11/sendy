@@ -353,7 +353,7 @@ unsafe impl BufMut for MessageSplitter {
 
 #[cfg(test)]
 mod tests {
-    use crate::net::msg::{MessageKind, TestMessage};
+    use crate::{net::msg::{MessageKind, TestMessage}, req::Request};
 
     use super::*;
 
