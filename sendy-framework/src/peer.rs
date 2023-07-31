@@ -6,7 +6,7 @@ use crate::{net::{sock::{ReliableSocketConnection, PacketKind}, msg::{ReceivedMe
 
 /// A connection to a remote peer over UDP
 pub struct Peer {
-    internal: ReliableSocketConnection,
+    conn: ReliableSocketConnection,
 }
 
 /// Structure implementing [ToBytes] that allows stateful conversions to bytes using the
@@ -17,10 +17,17 @@ struct ToBytesContext<'a, 'b, T: StatefulToBytes> {
 }
 
 impl Peer {
+    /// Create a new peer connection using the given socket state
+    pub(crate) fn new(conn: ReliableSocketConnection) -> Self {
+        Self {
+            conn,
+        }
+    }
+
     /// Await the reception of a request from the connected peer
     #[inline]
     pub async fn recv(&self) -> ReceivedMessage {
-        self.internal.recv().await
+        self.conn.recv().await
     }
 
     /// Send the given request message and await a response from the remote
@@ -30,7 +37,7 @@ impl Peer {
         ctx: &Context,
         msg: R,
     ) -> std::io::Result<oneshot::Receiver<Bytes>> {
-        ctx.socks.send_wait_response(&self.internal, R::KIND, ToBytesContext { ctx, val: &msg }).await
+        ctx.socks.send_wait_response(&self.conn, R::KIND, ToBytesContext { ctx, val: &msg }).await
     }
 
     /// Respond to the given request message with a payload only, no message kind needed
@@ -44,7 +51,7 @@ impl Peer {
         ctx
             .socks
             .send_with_id(
-                &self.internal,
+                &self.conn,
                 req.id,
                 PacketKind::Message(MessageKind::Respond),
                 ToBytesContext { ctx, val: &response },
@@ -57,7 +64,7 @@ impl Peer {
     #[inline]
     pub async fn send<R: Request>(&self, ctx: &Context, msg: R) -> std::io::Result<()> {
         ctx.socks
-            .send(&self.internal, PacketKind::Message(R::KIND), ToBytesContext { ctx, val: &msg })
+            .send(&self.conn, PacketKind::Message(R::KIND), ToBytesContext { ctx, val: &msg })
             .await
     }
 
@@ -65,10 +72,10 @@ impl Peer {
 
 impl<'a, 'b, T: StatefulToBytes> ToBytes for ToBytesContext<'a, 'b, T> {
    fn write<W: bytes::BufMut>(&self, buf: W) {
-       self.val.write(self.ctx, buf)
+       self.val.stateful_write(self.ctx, buf)
    }
 
     fn size_hint(&self) -> Option<usize> {
-        self.val.size_hint(self.ctx)
+        self.val.stateful_size_hint(self.ctx)
     }
 }

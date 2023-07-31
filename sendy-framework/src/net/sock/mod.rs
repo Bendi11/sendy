@@ -12,7 +12,7 @@ pub(crate) use packet::PacketKind;
 use parking_lot::Mutex;
 use tokio::{
     net::UdpSocket,
-    sync::{mpsc::Receiver, oneshot, Notify},
+    sync::{mpsc::Receiver, Notify},
 };
 
 use self::{
@@ -145,7 +145,7 @@ impl Drop for ReliableSocket {
 impl Default for SocketConfig {
     fn default() -> Self {
         Self {
-            max_recv_mem: 20_000_000,
+            max_recv_mem: 50_000_000,
             transmission_window_sz: 4,
             extra_wait_for_ack_ms: 250,
         }

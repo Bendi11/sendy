@@ -1,6 +1,6 @@
 pub mod ctx;
 pub mod net;
-pub mod conn;
+pub mod peer;
 pub mod req;
 pub mod model;
 mod ser;

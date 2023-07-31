@@ -3,10 +3,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use bytes::{Buf, BufMut};
-use rsa::{
-    pkcs8::{DecodePublicKey, EncodePublicKey},
-    RsaPublicKey,
-};
+
 
 /// Trait to be implemented by all types that can be written to a byte buffer
 pub trait ToBytes: Sized {
@@ -91,40 +88,6 @@ integral_from_to_bytes! {i16: get_i16_le, put_i16_le}
 integral_from_to_bytes! {i32: get_i32_le, put_i32_le}
 integral_from_to_bytes! {i64: get_i64_le, put_i64_le}
 
-type RsaPublicKeyLenType = u16;
-
-impl ToBytes for RsaPublicKey {
-    fn write<W: BufMut>(&self, mut buf: W) {
-        match self.to_public_key_der() {
-            Ok(der) => {
-                let bytes = der.as_bytes();
-                buf.put_u16_le(bytes.len() as RsaPublicKeyLenType);
-                buf.put_slice(bytes);
-            }
-            Err(e) => {
-                log::error!("Failed to encode RSA public key as PKCS#8 DER: {}", e,);
-            }
-        }
-    }
-
-    fn size_hint(&self) -> Option<usize> {
-        self.to_public_key_der()
-            .ok()
-            .map(|der| der.as_bytes().len())
-    }
-}
-
-impl FromBytes for RsaPublicKey {
-    fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let len = RsaPublicKeyLenType::parse(buf)?;
-        let bytes = buf.read_bytes(len as usize)?;
-
-        match RsaPublicKey::from_public_key_der(bytes.as_slice_less_safe()) {
-            Ok(pubkey) => Ok(pubkey),
-            Err(e) => Err(FromBytesError::Parsing(e.to_string())),
-        }
-    }
-}
 
 impl ToBytes for () {
     fn write<W: BufMut>(&self, _buf: W) {}
