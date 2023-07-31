@@ -18,7 +18,7 @@ pub struct PrivateKeychain {
 
 /// A collection of public keys that are used to verify digitally signed messages and encrypt
 /// messages, this must be sent to every peer
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PublicKeychain {
     /// Verification key that can authenticate signed messages
     pub auth: VerifyingKey<Sha256>,
@@ -28,7 +28,7 @@ pub struct PublicKeychain {
 
 /// A signed certificate that states the IP address that owns a set of public keys used for
 /// authorization and encryption
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SignedCertificate {
     /// The public keychain and owner IP address, natively accessible from Rust code
     repr: UnsignedCertificate,
@@ -45,7 +45,7 @@ pub struct SignedCertificate {
 /// Format:
 /// ([PublicKeychain])
 /// ([IpAddr])
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UnsignedCertificate {
     /// The keys that the IP address in this certificate claims
     keys: PublicKeychain,

@@ -28,6 +28,7 @@ async fn main() {
     let bits = 4096;
     let signature = rsa::RsaPrivateKey::new(&mut rng, bits).unwrap();
     let encrypt = rsa::RsaPrivateKey::new(&mut rng, bits).unwrap();
+    log::trace!("KEYS");
 
     let keychain = PrivateKeychain::new(signature, encrypt);
 

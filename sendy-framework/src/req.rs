@@ -33,6 +33,8 @@ pub struct ConnectAuthenticateResponse {
     pub cert: SignedCertificate,
 }
 
+impl Response for ConnectAuthenticateResponse {}
+
 impl ToBytes for ConnectAuthenticateResponse {
     fn write<W: BufMut>(&self, buf: W) {
         self.cert.write(buf)
