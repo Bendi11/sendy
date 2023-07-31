@@ -127,6 +127,10 @@ impl FromBytes for RsaPublicKey {
     }
 }
 
+impl ToBytes for () {
+    fn write<W: BufMut>(&self, buf: W) {}
+    fn size_hint(&self) -> Option<usize> { Some(0) }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum FromBytesError {

@@ -2,7 +2,7 @@ use std::{fmt, num::NonZeroU8};
 
 use bytes::BufMut;
 
-use crate::{net::msg::{Message, MessageKind}, ser::{FromBytes, ToBytes, FromBytesError}};
+use crate::{net::msg::{MessageKind}, ser::{FromBytes, ToBytes, FromBytesError}};
 
 /// 'minimum maximum reassembly buffer size' guaranteed to be deliverable, minus IP and UDP headers
 pub(crate) const MAX_SAFE_UDP_PAYLOAD: usize = 500;
@@ -74,9 +74,7 @@ pub enum PacketKind {
 /// functions to send ACK packets with the same interface as other messages
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AckMessage;
-impl Message for AckMessage {
-    const KIND: PacketKind = PacketKind::Ack;
-}
+
 impl FromBytes for AckMessage {
     fn parse(_: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
         Ok(Self)

@@ -21,7 +21,7 @@ use self::{
     tx::ReliableSocketCongestionControl,
 };
 
-use super::msg::{Message, ReceivedMessage};
+use super::msg::{ReceivedMessage, Request, Response};
 
 /// Configuration options for a socket connection
 #[derive(Debug)]
@@ -38,14 +38,14 @@ pub struct SocketConfig {
 /// a minimal reliability layer that guarantees messages are received in the order they are
 /// transmitted (unless they dropped for another reason - e.g. the message was too large to accomodate)
 #[derive(Debug)]
-pub struct ReliableSocket {
+pub(crate) struct ReliableSocket {
     internal: Arc<ReliableSocketInternal>,
     recvproc: tokio::task::JoinHandle<()>,
 }
 
 /// State maintained for each connection to a remote peer, created by a [ReliableSocket]
 #[derive(Debug)]
-pub struct ReliableSocketConnection {
+pub(crate) struct ReliableSocketConnection {
     /// A reference to the socket manager that handles actual tx and rx
     internal: Arc<ReliableSocketInternal>,
     /// Address and port of the remote peer
@@ -132,25 +132,20 @@ impl ReliableSocketConnection {
     }
     
     /// Send the given request message and await a response from the remote
-    pub async fn send_wait_response<M: Message>(&self, msg: M)
+    pub async fn send_wait_response<R: Request>(&self, msg: R)
         -> std::io::Result<oneshot::Receiver<Bytes>> {
         self.internal.send_wait_response(self, msg).await
     }
     
     /// Respond to the given request message with a payload only, no message kind needed
-    pub async fn respond<R: Message>(&self, req: &ReceivedMessage, response: R) -> std::io::Result<()> {
-        assert_eq!(
-            R::KIND,
-            PacketKind::Message(MessageKind::Respond),
-            "May only send response message in response"
-        );
-        self.internal.send_with_id(self, req.id, response).await
+    pub async fn respond<R: Response>(&self, req: &ReceivedMessage, response: R) -> std::io::Result<()> {
+        self.internal.send_with_id(self, req.id, PacketKind::Message(MessageKind::Respond), response).await
     }
 
     /// Send the given message to the connected peer, returns an `Error` if writing to the socket
     /// fails
-    pub async fn send<M: Message>(&self, msg: M) -> std::io::Result<()> {
-        self.internal.send(self, msg).await
+    pub async fn send<R: Request>(&self, msg: R) -> std::io::Result<()> {
+        self.internal.send(self, PacketKind::Message(R::KIND), msg).await
     }
 }
 

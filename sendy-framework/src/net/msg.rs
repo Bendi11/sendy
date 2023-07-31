@@ -30,9 +30,11 @@ pub struct ReceivedMessage {
 }
 
 /// Trait satisfied by all types that can be serialized to bytes and sent to other nodes
-pub trait Message: ToBytes + FromBytes {
-    const KIND: PacketKind;
+pub trait Request: ToBytes + FromBytes {
+    const KIND: MessageKind;
 }
+
+pub trait Response: ToBytes + FromBytes {}
 
 impl TryFrom<u8> for MessageKind {
     type Error = FromBytesError;
@@ -52,9 +54,11 @@ impl TryFrom<u8> for MessageKind {
 #[derive(Clone, Debug)]
 pub struct TestMessage(pub Vec<u8>);
 
-impl Message for TestMessage {
-    const KIND: PacketKind = PacketKind::Message(MessageKind::Test);
+impl Request for TestMessage {
+    const KIND: MessageKind = MessageKind::Test;
 }
+
+impl Response for TestMessage {}
 
 impl FromBytes for TestMessage {
     fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {

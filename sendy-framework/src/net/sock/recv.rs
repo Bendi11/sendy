@@ -366,7 +366,7 @@ impl ReliableSocketInternal {
     /// Send an ACK packet to the remote peer, logging any error that occurs when transmitting the
     /// packet
     async fn send_ack(&self, addr: &SocketAddr, id: PacketId) {
-        if let Err(e) = self.send_single_raw(addr, id, AckMessage).await {
+        if let Err(e) = self.send_single_raw(addr, id, PacketKind::Ack, ()).await {
             log::error!("{}: Failed to send ACK packet: {}", addr, e,);
         }
     }

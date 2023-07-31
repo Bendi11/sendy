@@ -11,7 +11,7 @@ use bytes::{buf::UninitSlice, BufMut, BytesMut, Bytes};
 use tokio::{sync::{Notify, Semaphore, oneshot}, net::UdpSocket};
 
 use crate::{
-    net::msg::Message,
+    net::msg::{Request},
     ser::{ToBytes, FromBytes},
 };
 
@@ -71,25 +71,25 @@ impl ReliableSocketConnection {
 impl ReliableSocketInternal {
     /// Send a message via UDP to the connected peer of `conn`, returning a channel that will send
     /// a value when the peer responds
-    pub async fn send_wait_response<M: Message>(&self, conn: &ReliableSocketConnection, msg: M) 
+    pub async fn send_wait_response<R: Request>(&self, conn: &ReliableSocketConnection, req: R) 
         -> std::io::Result<oneshot::Receiver<Bytes>> {
         let msgid = conn.next_message_id();
         let recv = self.wait_response(conn.remote.ip(), msgid);
-        self.send_with_id(conn, msgid, msg).await?;
+        self.send_with_id(conn, msgid, PacketKind::Message(R::KIND), req).await?;
         Ok(recv)
     }
     
     /// Send a message to the connected peer via UDP *without* waiting for a response message
-    pub async fn send<M: Message>(&self, conn: &ReliableSocketConnection, msg: M) -> std::io::Result<()> {
+    pub async fn send<B: ToBytes>(&self, conn: &ReliableSocketConnection, kind: PacketKind, msg: B) -> std::io::Result<()> {
         let id = conn.next_message_id();
-        self.send_with_id(conn, id, msg).await
+        self.send_with_id(conn, id, kind, msg).await
     }
 
     /// Send a single message via UDP, splitting the message into as many packets as necessary to
     /// transmit. This method requires a valid message ID to be provided, see [send] for a more
     /// general-purpose method
-    pub async fn send_with_id<M: Message>(&self, conn: &ReliableSocketConnection, id: NonZeroU8, msg: M) -> std::io::Result<()> {
-        let mut splitter = MessageSplitter::new(M::KIND, id);
+    pub async fn send_with_id<B: ToBytes>(&self, conn: &ReliableSocketConnection, id: NonZeroU8, kind: PacketKind, msg: B) -> std::io::Result<()> {
+        let mut splitter = MessageSplitter::new(kind, id);
         msg.write(&mut splitter);
         let mut pkts = splitter
             .into_packet_iter()
@@ -101,7 +101,7 @@ impl ReliableSocketInternal {
             None => {
                 log::error!(
                     "MessageSplitter did not produce a single packet for message {:?}",
-                    M::KIND
+                    kind
                 );
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -125,6 +125,37 @@ impl ReliableSocketInternal {
         rx
     }
 
+    /// Send the given [Message] - this function performs NO message splitting, so the encoded
+    /// size of `msg` MUST be less than BLOCK_SIZE - e.g. the message must
+    /// be a control message (see [PacketKind](super::packet::PacketKind))
+    pub async fn send_single_raw<B: ToBytes>(&self, addr: &SocketAddr, id: PacketId, kind: PacketKind, msg: B) -> std::io::Result<()> {
+        let encoded_sz = msg.size_hint();
+        //allocate extra space in the packet buffer for the header
+        let mut buf = BytesMut::with_capacity(msg.size_hint().unwrap_or(0) + HEADER_SZ);
+
+        //Don't waste time writing nothing and calculating the checksum if there is no payload
+        let checksum = if encoded_sz == Some(0) {
+            0
+        } else {
+            buf.put_slice(&[0u8; HEADER_SZ]);
+            msg.write(&mut buf);
+            crc32fast::hash(&buf[HEADER_SZ..])
+        };
+
+        let header = PacketHeader {
+            kind,
+            id,
+            checksum,
+        };
+
+        header.write(&mut buf[..HEADER_SZ]);
+        
+        let sock = self.get_sock(addr.port())?;
+        sock.send_to(&buf, addr).await?;
+        
+        Ok(())
+    }
+    
     /// Repeatedly send the given packet via UDP while waiting for an ACK packet in response
     async fn send_wait_ack(&self, conn: &ReliableSocketConnection, id: PacketId, pkt: &[u8]) -> std::io::Result<()> {
         let permit = conn
@@ -195,37 +226,6 @@ impl ReliableSocketInternal {
         }
     }
 
-    /// Send the given [Message] - this function performs NO message splitting, so the encoded
-    /// size of `msg` MUST be less than BLOCK_SIZE - e.g. the message must
-    /// be a control message (see [PacketKind](super::packet::PacketKind))
-    pub async fn send_single_raw<M: Message>(&self, addr: &SocketAddr, id: PacketId, msg: M) -> std::io::Result<()> {
-        let encoded_sz = msg.size_hint();
-        //allocate extra space in the packet buffer for the header
-        let mut buf = BytesMut::with_capacity(msg.size_hint().unwrap_or(0) + HEADER_SZ);
-
-        //Don't waste time writing nothing and calculating the checksum if there is no payload
-        let checksum = if encoded_sz == Some(0) {
-            0
-        } else {
-            buf.put_slice(&[0u8; HEADER_SZ]);
-            msg.write(&mut buf);
-            crc32fast::hash(&buf[HEADER_SZ..])
-        };
-
-        let header = PacketHeader {
-            kind: M::KIND,
-            id,
-            checksum,
-        };
-
-        header.write(&mut buf[..HEADER_SZ]);
-        
-        let sock = self.get_sock(addr.port())?;
-        sock.send_to(&buf, addr).await?;
-        
-        Ok(())
-    }
-    
     /// Lookup the socket bound to the given port, or log and return an error
     fn get_sock(&self, port: u16) -> std::io::Result<dashmap::mapref::one::Ref<'_, u16, UdpSocket>> {
         match self.socks.get(&port) {
@@ -350,7 +350,7 @@ mod tests {
                 &mut untrusted::Reader::new(untrusted::Input::from(&packets[0].1))
             ).unwrap(),
             PacketHeader {
-                kind: TestMessage::KIND,
+                kind: PacketKind::Message(TestMessage::KIND),
                 id: PacketId {
                     msgid,
                     blockid: blocks as u16

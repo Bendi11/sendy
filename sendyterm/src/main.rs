@@ -3,7 +3,7 @@ use std::{net::{SocketAddrV4, SocketAddr}, time::Duration};
 use clap::Parser;
 use sendy_framework::net::{
     msg::TestMessage,
-    sock::{ReliableSocket, SocketConfig},
+    sock::{SocketConfig},
 };
 
 /// Test UDP connection on local network
