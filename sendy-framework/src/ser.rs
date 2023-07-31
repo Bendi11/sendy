@@ -1,5 +1,7 @@
 //! Module defining traits for how rust types get serialized to bytes when transmitted
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
 use bytes::{Buf, BufMut};
 use rsa::{
     pkcs8::{DecodePublicKey, EncodePublicKey},
@@ -145,5 +147,80 @@ pub enum FromBytesError {
 impl From<untrusted::EndOfInput> for FromBytesError {
     fn from(value: untrusted::EndOfInput) -> Self {
         Self::EndOfInput(value)
+    }
+}
+
+const IPVERSION_MARKER_V4: u8 = 4;
+const IPVERSION_MARKER_V6: u8 = 6;
+
+/// Format of general (IPv4 or IPv6) IP address:
+/// ipversion - 1 byte - 4 for ipv4 and 6 for ipv6
+/// addr - 4 or 16 bytes - based on ipversion
+impl ToBytes for IpAddr {
+    fn write<B: BufMut>(&self, mut buf: B) {
+        match self {
+            Self::V4(v4addr) => {
+                buf.put_u8(IPVERSION_MARKER_V4);
+                v4addr.write(buf);
+            },
+            Self::V6(v6addr) => {
+                buf.put_u8(IPVERSION_MARKER_V6);
+                v6addr.write(buf);
+            }
+        }
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        match self {
+            Self::V4(addr) => addr.size_hint(),
+            Self::V6(addr) => addr.size_hint(),
+        }.map(|sz| sz + 1)
+    }
+}
+
+impl FromBytes for IpAddr {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let marker = reader.read_byte()?;
+        Ok(match marker {
+            IPVERSION_MARKER_V4 => Self::V4(Ipv4Addr::parse(reader)?),
+            IPVERSION_MARKER_V6 => Self::V6(Ipv6Addr::parse(reader)?),
+            _ => return Err(FromBytesError::Parsing(format!("Unknown IP version marker {:X}", marker))),
+        })
+    }
+}
+
+/// Format of IPv4 address:
+/// addr - 4 bytes - big endian address
+impl ToBytes for Ipv4Addr {
+    fn write<W: BufMut>(&self, buf: W) {
+        let le = u32::from_le_bytes(self.octets());
+        le.write(buf)
+    }
+}
+
+impl FromBytes for Ipv4Addr {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let rd = [reader.read_byte()? ; 4];
+        Ok(Self::from(rd))
+    }
+}
+
+/// Format of IPv6 address:
+/// addr - 16 bytes - big endian address
+impl ToBytes for Ipv6Addr {
+    fn write<W: BufMut>(&self, mut buf: W) {
+        let mut octets = self.octets();
+        buf.put_slice(&octets);
+    }
+    
+    fn size_hint(&self) -> Option<usize> {
+        Some(16)
+    }
+}
+
+impl FromBytes for Ipv6Addr {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let rd = [reader.read_byte()? ; 16];
+        Ok(Self::from(rd))
     }
 }

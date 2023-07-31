@@ -9,6 +9,8 @@ pub struct Peer {
     internal: ReliableSocketConnection,
 }
 
+/// Structure implementing [ToBytes] that allows stateful conversions to bytes using the
+/// [Context]'s cryptography keys
 struct ToBytesContext<'a, 'b, T: StatefulToBytes> {
     ctx: &'a Context,
     val: &'b T,

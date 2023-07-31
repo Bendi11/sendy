@@ -24,6 +24,12 @@ pub trait Request: StatefulToBytes + StatefulFromBytes {
 
 pub trait Response: StatefulToBytes + StatefulFromBytes {}
 
+/// Request sent to a remote peer requesting the node send certificates with public keys for
+/// authentication and encryption
+pub struct ConnectAuthenticateRequest {
+    
+}
+
 impl<T: ToBytes> StatefulToBytes for T {
     fn write<B: BufMut>(&self, _: &Context, buf: B) { <Self as ToBytes>::write(self, buf) }
     fn size_hint(&self, _: &Context) -> Option<usize> { <Self as ToBytes>::size_hint(self) }
