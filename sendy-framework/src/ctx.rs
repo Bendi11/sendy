@@ -42,7 +42,7 @@ impl Context {
             loop {
                 let msg = peer.recv().await;
                 if msg.kind == MessageKind::AuthConnect {
-                    peer.respond(self, &msg, TestMessage(self.keychain.public().enc)).await.unwrap();
+                    peer.respond(self, &msg, TestMessage(self.keychain.public())).await.unwrap();
                 }
             }
         };

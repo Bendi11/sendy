@@ -49,7 +49,7 @@ impl TryFrom<u8> for MessageKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct TestMessage(pub RsaPublicKey);
+pub struct TestMessage(pub crate::model::crypto::PublicKeychain);
 
 impl Response for TestMessage {}
 impl Request for TestMessage {
@@ -58,7 +58,7 @@ impl Request for TestMessage {
 
 impl FromBytes for TestMessage {
     fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        Ok(Self(RsaPublicKey::parse(buf)?)) 
+        Ok(Self(crate::model::crypto::PublicKeychain::parse(buf)?)) 
     }
 }
 

@@ -242,7 +242,7 @@ impl FromBytes for PublicKeychain {
 /// der - variable bytes determined by len
 impl ToBytes for RsaPublicKey {
     fn write<W: BufMut>(&self, mut buf: W) {
-        let der = match self.to_public_key_der() {
+        let der = match self.to_public_key_pem(rsa::pkcs8::LineEnding::LF) {
             Ok(der) => der,
             Err(e) => {
                 log::error!("Failed to encode RSA public key as DER: {}", e);
@@ -263,7 +263,12 @@ impl FromBytes for RsaPublicKey {
         println!("len: {}", len);
         let bytes = buf.read_bytes(len as usize)?;
 
-        match RsaPublicKey::from_public_key_der(bytes.as_slice_less_safe()) {
+        match RsaPublicKey::from_public_key_pem(std::str::from_utf8(bytes.as_slice_less_safe()).unwrap_or_else(|_| {
+            for byte in bytes.as_slice_less_safe() {
+                print!("{:0X}", byte);
+            }
+            panic!("\n\n\n\n");
+        })) {
             Ok(pubkey) => Ok(pubkey),
             Err(e) => Err(FromBytesError::Parsing(e.to_string())),
         }
