@@ -67,9 +67,16 @@ async fn main() {
             secret::SECRET_STORE.store(&PrivateKeychain::new(signature, encrypt)).await;
         },
         CliCommand::Connect { peer, publicip } => {
-            let Some(keychain) = secret::SECRET_STORE.read().await else {
-                log::error!("Failed to get secret keys from store");
-                return
+            let keychain = match secret::SECRET_STORE.read().await {
+                Some(kc) => kc,
+                None => {
+                    log::error!("Failed to get secret keys from store, generating them for session");
+                    let mut rng = rsa::rand_core::OsRng::default();
+                    let signature = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
+                    let encrypt = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
+
+                    PrivateKeychain::new(signature, encrypt)
+                }
             };
             
             let ctx = Context::new(keychain, std::net::IpAddr::V4(publicip)).await;
