@@ -167,16 +167,18 @@ impl FromBytes for IpAddr {
 /// Format of IPv4 address:
 /// addr - 4 bytes - big endian address
 impl ToBytes for Ipv4Addr {
-    fn write<W: BufMut>(&self, buf: W) {
-        let le = u32::from_le_bytes(self.octets());
-        le.write(buf)
+    fn write<W: BufMut>(&self, mut buf: W) {
+        buf.put_slice(&self.octets());
     }
 }
 
 impl FromBytes for Ipv4Addr {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let rd = [reader.read_byte()? ; 4];
-        Ok(Self::from(rd))
+        let mut buf = [0u8 ; 4];
+        for idx in 0..buf.len() {
+            buf[idx] = reader.read_byte()?;
+        }
+        Ok(Self::from(buf))
     }
 }
 
@@ -184,7 +186,7 @@ impl FromBytes for Ipv4Addr {
 /// addr - 16 bytes - big endian address
 impl ToBytes for Ipv6Addr {
     fn write<W: BufMut>(&self, mut buf: W) {
-        let mut octets = self.octets();
+        let octets = self.octets();
         buf.put_slice(&octets);
     }
     
@@ -195,7 +197,10 @@ impl ToBytes for Ipv6Addr {
 
 impl FromBytes for Ipv6Addr {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let rd = [reader.read_byte()? ; 16];
-        Ok(Self::from(rd))
+        let mut buf = [0u8 ; 16];
+        for idx in 0..buf.len() {
+            buf[idx] = reader.read_byte()?;
+        }
+        Ok(Self::from(buf))
     }
 }
