@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{ops::Deref, net::SocketAddr};
 
 use bytes::Bytes;
 use futures::Future;
@@ -47,6 +47,11 @@ impl PeerConnection {
         Self {
             conn,
         }
+    }
+    
+    /// Get the address that this peer is located at
+    pub const fn remote(&self) -> &SocketAddr {
+        self.conn.remote()
     }
 
     /// Await the reception of a request from the connected peer

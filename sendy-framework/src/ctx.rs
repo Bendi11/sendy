@@ -56,7 +56,8 @@ impl Context {
             let resp = resp.await;
             let response = ConnectAuthenticateResponse::read_from_slice(&resp)?;
 
-            if !response.cert.verify(&response.cert.cert().keychain().auth) {
+            if !response.cert.verify(&response.cert.cert().keychain().auth) ||
+                response.cert.cert().owner() != &peer.remote().ip() {
                 return Err(PeerConnectError::InvalidCertificateSignature)
             }
 

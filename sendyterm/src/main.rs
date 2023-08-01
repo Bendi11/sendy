@@ -81,6 +81,7 @@ async fn main() {
             
             let ctx = Context::new(keychain, std::net::IpAddr::V4(publicip)).await;
             let _peer = ctx.connect(std::net::SocketAddr::V4(peer)).await.unwrap();
+            println!("Valid peer connected");
 
             tokio::time::sleep(Duration::from_secs(5)).await;
         }

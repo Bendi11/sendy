@@ -80,6 +80,12 @@ impl ReliableSocketConnection {
             panic!("Message receiver channel closed");
         }
     }
+    
+    /// Get the address that this socket is connected to
+    #[inline]
+    pub const fn remote(&self) -> &SocketAddr {
+        &self.remote
+    }
 }
 
 impl ReliableSocket {
