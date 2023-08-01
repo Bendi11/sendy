@@ -1,7 +1,7 @@
 mod secret;
 use std::{net::{SocketAddrV4, Ipv4Addr}, time::Duration};
 
-use clap::{Parser, Subcommand, builder::PossibleValuesParser};
+use clap::{Parser, Subcommand};
 
 use sendy_framework::{rsa, model::crypto::PrivateKeychain, ctx::Context};
 
@@ -22,11 +22,11 @@ pub enum CliCommand {
         #[arg(default_value_t=RsaKeyWidth::Large)]
         bits: RsaKeyWidth,
     },
-    #[command(about = "Connect to the remote peer at the given address using keys strored in the secret storage")]
+    #[command(about = "Connect to the remote peer at the given address using keys stored in the secret storage")]
     Connect {
         #[arg(index=1, name="PEER", help="IP address and port of the remote peer")]
         peer: SocketAddrV4,
-        #[arg(short='h', long="hostip", help="Public IP address of the local host")]
+        #[arg(short='p', long="hostip", help="Public IP address of the local host")]
         publicip: Ipv4Addr,
     }
 }

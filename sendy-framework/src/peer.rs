@@ -15,9 +15,7 @@ pub struct Peer {
 
 /// A connection to a remote peer over UDP allowing two-way communication with the peer, see [Peer]
 /// for a structure that also contains state retrieved in a connection handshake
-pub struct PeerConnection {
-    conn: ReliableSocketConnection,
-}
+pub struct PeerConnection(ReliableSocketConnection);
 
 /// Structure implementing [ToBytes] that allows stateful conversions to bytes using the
 /// [Context]'s cryptography keys
@@ -44,20 +42,18 @@ impl Deref for Peer {
 impl PeerConnection {
     /// Create a new peer connection using the given socket state
     pub(crate) fn new(conn: ReliableSocketConnection) -> Self {
-        Self {
-            conn,
-        }
+        Self(conn)
     }
     
-    /// Get the address that this peer is located at
+    /// Get the IP address and port of the connected peer
     pub const fn remote(&self) -> &SocketAddr {
-        self.conn.remote()
+        self.0.remote()
     }
 
     /// Await the reception of a request from the connected peer
     #[inline]
     pub async fn recv(&self) -> ReceivedMessage {
-        self.conn.recv().await
+        self.0.recv().await
     }
 
     /// Send the given request message and await a response from the remote
@@ -67,7 +63,7 @@ impl PeerConnection {
         ctx: &'a Context,
         msg: &'a R,
     ) -> std::io::Result<impl Future<Output=Bytes> + 'a> {
-        ctx.socks.send_wait_response(&self.conn, R::KIND, ToBytesContext { ctx, val: msg }).await
+        ctx.socks.send_wait_response(&self.0, R::KIND, ToBytesContext { ctx, val: msg }).await
     }
 
     /// Respond to the given request message with a payload only, no message kind needed
@@ -81,7 +77,7 @@ impl PeerConnection {
         ctx
             .socks
             .send_with_id(
-                &self.conn,
+                &self.0,
                 req.id,
                 PacketKind::Message(MessageKind::Respond),
                 ToBytesContext { ctx, val: &response },
@@ -94,7 +90,7 @@ impl PeerConnection {
     #[inline]
     pub async fn send<R: Request>(&self, ctx: &Context, msg: R) -> std::io::Result<()> {
         ctx.socks
-            .send(&self.conn, PacketKind::Message(R::KIND), ToBytesContext { ctx, val: &msg })
+            .send(&self.0, PacketKind::Message(R::KIND), ToBytesContext { ctx, val: &msg })
             .await
     }
 }

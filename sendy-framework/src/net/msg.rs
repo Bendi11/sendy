@@ -1,7 +1,6 @@
 use std::num::NonZeroU8;
 
 use bytes::Bytes;
-use rsa::RsaPublicKey;
 
 use super::sock::PacketKind;
 use crate::{ser::{FromBytes, FromBytesError, ToBytes}, req::{Request, Response}};
@@ -24,7 +23,7 @@ pub enum MessageKind {
 pub struct ReceivedMessage {
     /// Received message kind, used to instruct parsing
     pub kind: MessageKind,
-    /// ID of the message as it was transmitted by the peer
+    /// ID of the message as it was transmitted by the peer, used to respond to messages
     pub(crate) id: NonZeroU8,
     /// The payload of the message
     pub bytes: Bytes,

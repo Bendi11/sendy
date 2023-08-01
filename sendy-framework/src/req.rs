@@ -6,7 +6,7 @@ use crate::{net::msg::MessageKind, ser::{ToBytes, FromBytesError, FromBytes}, ct
 /// keys
 pub trait StatefulToBytes {
     fn stateful_write<W: bytes::BufMut>(&self, ctx: &Context, buf: W);
-    fn stateful_size_hint(&self, ctx: &Context) -> Option<usize> { None }
+    fn stateful_size_hint(&self, _: &Context) -> Option<usize> { None }
 }
 
 /// A variation of [FromBytes] that allows types to use the global [Context]'s state including
@@ -54,12 +54,12 @@ impl FromBytes for ConnectAuthenticateResponse {
 }
 
 impl ToBytes for ConnectAuthenticateRequest {
-    fn write<W: BufMut>(&self, buf: W) {}
+    fn write<W: BufMut>(&self, _: W) {}
     fn size_hint(&self) -> Option<usize> { Some(0) }
 }
 
 impl FromBytes for ConnectAuthenticateRequest {
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+    fn parse(_: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         Ok(Self)
     }
 }

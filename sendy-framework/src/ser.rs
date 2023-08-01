@@ -204,3 +204,46 @@ impl FromBytes for Ipv6Addr {
         Ok(Self::from(buf))
     }
 }
+
+/// Format of string:
+/// len - 4 bytes - [u32](std::u32)
+/// bytes - `len` bytes
+impl ToBytes for String {
+    fn write<W: BufMut>(&self, mut buf: W) {
+        (self.as_bytes().len() as u32).write(&mut buf);
+        buf.put_slice(&self.as_bytes())
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(self.as_bytes().len())
+    }
+}
+
+impl FromBytes for String {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let len = u32::parse(reader)?;
+        let bytes = reader.read_bytes(len as usize)?;
+        Ok(Self::from_utf8_lossy(bytes.as_slice_less_safe()).into_owned())
+    }
+}
+
+impl<const N: usize> ToBytes for [u8 ; N] {
+    fn write<W: BufMut>(&self, mut buf: W) {
+        buf.put_slice(self.as_slice())
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(N)
+    }
+}
+
+impl<const N: usize> FromBytes for [u8 ; N] {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let mut this = [0u8 ; N];
+        for idx in 0..N {
+            this[idx] = reader.read_byte()?;
+        }
+
+        Ok(this)
+    }
+}
