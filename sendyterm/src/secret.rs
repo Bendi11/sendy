@@ -38,6 +38,13 @@ mod secserv {
             
             let collection = match service.get_default_collection().await {
                 Ok(c) => c,
+                Err(secret_service::Error::NoResult) => match service.create_collection("Default Keyring", "default").await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        log::error!("Failed to create default keyring: {}", e);
+                        return
+                    }
+                },
                 Err(e) => {
                     log::error!("Failed to get collection for keychain: {}", e);
                     return
