@@ -11,7 +11,7 @@ pub struct Context {
     /// authentication and encryption keys it claims
     certificate: SignedCertificate,
     /// Collection of the host's crypto keys
-    keychain: PrivateKeychain,
+    pub(crate) keychain: PrivateKeychain,
 }
 
 impl Context {

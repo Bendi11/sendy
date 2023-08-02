@@ -23,6 +23,13 @@ pub trait StatefulToBytes {
 /// crypto keys
 pub trait StatefulFromBytes: Sized {
     fn stateful_parse(ctx: &Context, peer: &Peer, buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError>;
+
+    /// Helper function to read an instance of [self] without needing to create [untrusted] types
+    fn stateful_read_from_slice(ctx: &Context, peer: &Peer, slice: &[u8]) -> Result<Self, FromBytesError> {
+        let mut reader = untrusted::Reader::new(untrusted::Input::from(slice));
+        Self::stateful_parse(ctx, peer, &mut reader)
+    }
+
 }
 
 
@@ -124,6 +131,18 @@ impl<T: StatefulToBytes> StatefulToBytes for Encrypted<T> {
                 }
             };
 
+        (encrypted.len() as u32).write(&mut buf);
         buf.put_slice(&encrypted);
+    }
+}
+
+impl<T: StatefulFromBytes> StatefulFromBytes for Encrypted<T> {
+    fn stateful_parse(ctx: &Context, peer: &Peer, buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let len = u32::parse(buf)?;
+        let encrypted = buf.read_bytes(len as usize)?.as_slice_less_safe();
+        let decrypted = ctx.keychain.enc.decrypt(Pkcs1v15Encrypt, encrypted)
+            .map_err(|e| FromBytesError::Parsing(format!("Failed to decrypt a message: {}", e)))?;
+
+        T::stateful_read_from_slice(ctx, peer, &decrypted).map(Self)
     }
 }
