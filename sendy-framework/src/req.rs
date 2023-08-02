@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use bytes::BufMut;
-use rsa::{Pkcs1v15Encrypt, rand_core::OsRng};
+use rsa::{Pkcs1v15Encrypt, rand_core::OsRng, pkcs1v15::Signature};
 
 use crate::{net::msg::MessageKind, ser::{ToBytes, FromBytesError, FromBytes}, ctx::Context, model::{crypto::SignedCertificate, channel::UnkeyedChannel}, Peer};
 
@@ -53,6 +53,11 @@ impl<T> Deref for Encrypted<T> {
         &self.0
     }
 }
+
+/// Wrapper for a type that is signed with the private key before being sent to a remote, and
+/// verified with a remote's public key when receieved
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct Signed<T>(T);
 
 /// Request sent to a remote peer requesting the node send certificates with public keys for
 /// authentication and encryption
@@ -144,5 +149,28 @@ impl<T: StatefulFromBytes> StatefulFromBytes for Encrypted<T> {
             .map_err(|e| FromBytesError::Parsing(format!("Failed to decrypt a message: {}", e)))?;
 
         T::stateful_read_from_slice(ctx, peer, &decrypted).map(Self)
+    }
+}
+
+impl<T: StatefulToBytes> StatefulToBytes for Signed<T> {
+    fn stateful_write<W: bytes::BufMut>(&self, ctx: &Context, peer: &Peer, mut buf: W) {
+        use rsa::signature::Signer;
+        let encoded = self.0.stateful_write_to_vec(ctx, peer);
+        let signature = ctx.keychain.auth.sign(&encoded);
+        buf.put_slice(&encoded);
+        signature.write(&mut buf);
+    }
+}
+impl<T: StatefulFromBytes> StatefulFromBytes for Signed<T> {
+    fn stateful_parse(ctx: &Context, peer: &Peer, buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        use rsa::signature::Verifier;
+        let (read, val) = buf.read_partial(|rdr| T::stateful_parse(ctx, peer, rdr))?;
+        let sig = Signature::parse(buf)?;
+        
+        if let Err(e) = peer.remote_keys().auth.verify(read.as_slice_less_safe(), &sig) {
+            return Err(FromBytesError::Parsing(format!("Failed to verify signature from {}: {}", peer.remote().ip(), e)))
+        }
+
+        Ok(Self(val))
     }
 }

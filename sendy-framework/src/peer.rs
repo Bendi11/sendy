@@ -1,4 +1,4 @@
-use std::{ops::Deref, net::SocketAddr};
+use std::net::SocketAddr;
 
 use bytes::Bytes;
 use futures::Future;
@@ -33,7 +33,6 @@ impl Peer {
         self.certificate().cert().keychain()
     }
 }
-
 
 impl Peer {
     /// Get the IP address and port of the connected peer
