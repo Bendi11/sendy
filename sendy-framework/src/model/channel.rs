@@ -7,7 +7,7 @@ use rsa::rand_core;
 use rand_core::{RngCore, OsRng};
 use sha2::Sha256;
 
-use crate::{ToBytes, FromBytes, ser::UntrustedReader};
+use crate::{ToBytes, FromBytes};
 
 /// A channel identifier created by hashing the [Channel]'s seed
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,7 +113,7 @@ impl ToBytes for UnkeyedChannel {
 }
 
 impl FromBytes for UnkeyedChannel {
-    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, crate::FromBytesError> {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, crate::FromBytesError> {
         let id = ChannelId::parse(reader)?;
         let seed = <[u8 ; 32]>::parse(reader)?;
         let keysalt = <[u8 ; 16]>::parse(reader)?;
@@ -141,7 +141,7 @@ impl ToBytes for ChannelId {
 }
 
 impl FromBytes for ChannelId {
-    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, crate::FromBytesError> {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, crate::FromBytesError> {
         let id = u64::parse(reader)?;
         Ok(Self(*GenericArray::<u8, <Sha256 as OutputSizeUser>::OutputSize>::from_slice(&id.to_le_bytes())))
     }

@@ -3,7 +3,7 @@ use std::ops::Deref;
 use bytes::BufMut;
 use rsa::{Pkcs1v15Encrypt, rand_core::OsRng};
 
-use crate::{net::msg::MessageKind, ser::{ToBytes, FromBytesError, FromBytes, UntrustedReader}, ctx::Context, model::{crypto::SignedCertificate, channel::UnkeyedChannel}, Peer};
+use crate::{net::msg::MessageKind, ser::{ToBytes, FromBytesError, FromBytes}, ctx::Context, model::{crypto::SignedCertificate, channel::UnkeyedChannel}, Peer};
 
 /// A variation of [ToBytes] that allows types to use the global [Context]'s state including crypto
 /// keys
@@ -45,20 +45,10 @@ pub trait Response: StatefulToBytes + StatefulFromBytes {}
 /// read from a remote peer
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct Encrypted<T>(T);
+
 impl<T> Deref for Encrypted<T> {
     type Target = T;
 
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-/// Wrapper for a type that is signed with the host's private key before being sent to a remote,
-/// and verified with the sender's public key when being received
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub struct Signed<T>(T);
-impl<T> Deref for Signed<T> {
-    type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -82,7 +72,7 @@ impl Response for ConnectAuthenticateResponse {}
 pub struct ChannelInviteRequest {
     /// The channel that we are inviting a peer to, contains all **SECRET** information needed to
     /// derive the channel public key
-    pub channel: Encrypted<UnkeyedChannel>,
+    pub channel: UnkeyedChannel,
 }
 
 impl ToBytes for ConnectAuthenticateResponse {
@@ -95,7 +85,7 @@ impl ToBytes for ConnectAuthenticateResponse {
     }
 }
 impl FromBytes for ConnectAuthenticateResponse {
-    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, FromBytesError> {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         Ok(Self {
             cert: SignedCertificate::parse(reader)?,
         })
@@ -107,7 +97,7 @@ impl ToBytes for ConnectAuthenticateRequest {
     fn size_hint(&self) -> Option<usize> { Some(0) }
 }
 impl FromBytes for ConnectAuthenticateRequest {
-    fn parse<R: UntrustedReader>(_: &mut R) -> Result<Self, FromBytesError> {
+    fn parse(_: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         Ok(Self)
     }
 }
@@ -145,6 +135,7 @@ impl<T: StatefulToBytes> StatefulToBytes for Encrypted<T> {
         buf.put_slice(&encrypted);
     }
 }
+
 impl<T: StatefulFromBytes> StatefulFromBytes for Encrypted<T> {
     fn stateful_parse(ctx: &Context, peer: &Peer, buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let len = u32::parse(buf)?;
@@ -155,5 +146,3 @@ impl<T: StatefulFromBytes> StatefulFromBytes for Encrypted<T> {
         T::stateful_read_from_slice(ctx, peer, &decrypted).map(Self)
     }
 }
-
-

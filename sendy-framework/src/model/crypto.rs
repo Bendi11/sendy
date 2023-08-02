@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use bytes::BufMut;
 use rsa::{sha2::Sha256, pkcs1v15::{SigningKey, VerifyingKey, Signature}, RsaPublicKey, pkcs8::{EncodePublicKey, DecodePublicKey, EncodePrivateKey, DecodePrivateKey}, signature::{SignatureEncoding, Signer}, RsaPrivateKey};
 
-use crate::ser::{FromBytes, ToBytes, FromBytesError, UntrustedReader};
+use crate::ser::{FromBytes, ToBytes, FromBytesError};
 
 
 /// A collection of public **and private** cryptographic keys used to sign
@@ -152,7 +152,7 @@ impl ToBytes for SignedCertificate {
 }
 
 impl FromBytes for SignedCertificate {
-    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, FromBytesError> {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let len = u16::parse(reader)?;
         let slice = reader.read_bytes(len as usize)?;
         let encoded = Box::from(slice.as_slice_less_safe());
@@ -184,7 +184,7 @@ impl ToBytes for Signature {
 }
 
 impl FromBytes for Signature {
-    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, FromBytesError> {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let len = u16::parse(reader)?;
         let buf = reader.read_bytes(len as usize)?;
         Self::try_from(buf.as_slice_less_safe())
@@ -206,7 +206,7 @@ impl ToBytes for UnsignedCertificate {
 }
 
 impl FromBytes for UnsignedCertificate {
-    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, FromBytesError> {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         Ok(Self {
             keys: PublicKeychain::parse(reader)?,
             owner: IpAddr::parse(reader)?,
@@ -228,7 +228,7 @@ impl ToBytes for PublicKeychain {
 }
 
 impl FromBytes for PublicKeychain {
-    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, FromBytesError> {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         Ok(Self {
             auth: VerifyingKey::parse(reader)?,
             enc: RsaPublicKey::parse(reader)?,
@@ -258,7 +258,7 @@ impl ToBytes for RsaPublicKey {
 }
 
 impl FromBytes for RsaPublicKey {
-    fn parse<R: UntrustedReader>(buf: &mut R) -> Result<Self, FromBytesError> {
+    fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let len = u16::parse(buf)?;
         let bytes = buf.read_bytes(len as usize)?;
 
@@ -281,7 +281,7 @@ impl<D: rsa::sha2::Digest> ToBytes for VerifyingKey<D> {
 }
 
 impl FromBytes for VerifyingKey<Sha256> {
-    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, FromBytesError> {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         Ok(Self::new(RsaPublicKey::parse(reader)?))
     }
 }
@@ -304,7 +304,7 @@ impl ToBytes for RsaPrivateKey {
 }
 
 impl FromBytes for RsaPrivateKey {
-    fn parse<R: UntrustedReader>(buf: &mut R) -> Result<Self, FromBytesError> {
+    fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let len = u16::parse(buf)?;
         let bytes = buf.read_bytes(len as usize)?;
 
