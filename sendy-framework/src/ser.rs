@@ -27,12 +27,28 @@ pub trait ToBytes: Sized {
 pub trait FromBytes: Sized {
     /// Read bytes the given buffer (multi-byte words should be little endian) to create an
     /// instance of `Self`
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError>;
+    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, FromBytesError>;
     
     /// Helper function to read an instance of [self] without needing to create [untrusted] types
     fn read_from_slice(slice: &[u8]) -> Result<Self, FromBytesError> {
         let mut reader = untrusted::Reader::new(untrusted::Input::from(slice));
         Self::parse(&mut reader)
+    }
+}
+
+pub trait UntrustedReader: Sized {
+    fn read_bytes(&mut self, nbytes: usize) -> Result<untrusted::Input, untrusted::EndOfInput>;
+
+    fn read_byte(&mut self) -> Result<u8, untrusted::EndOfInput>;
+}
+
+impl<'a> UntrustedReader for untrusted::Reader<'a> {
+    fn read_bytes(&mut self, nbytes: usize) -> Result<untrusted::Input, untrusted::EndOfInput> {
+        self.read_bytes(nbytes)
+    }
+
+    fn read_byte(&mut self) -> Result<u8, untrusted::EndOfInput> {
+        self.read_byte()
     }
 }
 
@@ -63,7 +79,7 @@ impl<T: ToBytes> ToBytes for Vec<T> {
 }
 
 impl<T: FromBytes> FromBytes for Vec<T> {
-    fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+    fn parse<R: UntrustedReader>(buf: &mut R) -> Result<Self, FromBytesError> {
         let len: VecToBytesLenType = VecToBytesLenType::parse(buf)?;
         (0..len).map(|_| T::parse(buf)).collect::<Result<Self, _>>()
     }
@@ -82,7 +98,7 @@ macro_rules! integral_from_to_bytes {
         }
 
         impl FromBytes for $type {
-            fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+            fn parse<R: UntrustedReader>(buf: &mut R) -> Result<Self, FromBytesError> {
                 let bytes = buf.read_bytes(std::mem::size_of::<Self>())?;
                 Ok(bytes.as_slice_less_safe().$get_method_name())
             }
@@ -154,7 +170,7 @@ impl ToBytes for IpAddr {
 }
 
 impl FromBytes for IpAddr {
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, FromBytesError> {
         let marker = reader.read_byte()?;
         Ok(match marker {
             IPVERSION_MARKER_V4 => Self::V4(Ipv4Addr::parse(reader)?),
@@ -173,7 +189,7 @@ impl ToBytes for Ipv4Addr {
 }
 
 impl FromBytes for Ipv4Addr {
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, FromBytesError> {
         let mut buf = [0u8 ; 4];
         for idx in 0..buf.len() {
             buf[idx] = reader.read_byte()?;
@@ -196,7 +212,7 @@ impl ToBytes for Ipv6Addr {
 }
 
 impl FromBytes for Ipv6Addr {
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, FromBytesError> {
         let mut buf = [0u8 ; 16];
         for idx in 0..buf.len() {
             buf[idx] = reader.read_byte()?;
@@ -220,7 +236,7 @@ impl ToBytes for String {
 }
 
 impl FromBytes for String {
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, FromBytesError> {
         let len = u32::parse(reader)?;
         let bytes = reader.read_bytes(len as usize)?;
         Ok(Self::from_utf8_lossy(bytes.as_slice_less_safe()).into_owned())
@@ -238,7 +254,7 @@ impl<const N: usize> ToBytes for [u8 ; N] {
 }
 
 impl<const N: usize> FromBytes for [u8 ; N] {
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+    fn parse<R: UntrustedReader>(reader: &mut R) -> Result<Self, FromBytesError> {
         let mut this = [0u8 ; N];
         for idx in 0..N {
             this[idx] = reader.read_byte()?;
