@@ -3,7 +3,7 @@ use std::{ops::Deref, net::SocketAddr};
 use bytes::Bytes;
 use futures::Future;
 
-use crate::{net::{sock::{ReliableSocketConnection, PacketKind}, msg::{ReceivedMessage, MessageKind}}, req::{Request, Response, StatefulToBytes}, ctx::Context, ser::ToBytes, model::crypto::SignedCertificate};
+use crate::{net::{sock::{ReliableSocketConnection, PacketKind}, msg::{ReceivedMessage, MessageKind}}, req::{Request, Response, StatefulToBytes}, ctx::Context, ser::ToBytes, model::crypto::{SignedCertificate, PublicKeychain}};
 
 /// A connection to a remote peer over UDP, with state retrieved from a connection handshake
 pub struct Peer {
@@ -25,6 +25,12 @@ impl Peer {
     /// Get the signed certificate of this peer
     pub const fn certificate(&self) -> &SignedCertificate {
         &self.cert
+    }
+    
+    /// Shortcut for `certificate().cert().keychain()`
+    #[inline(always)]
+    pub const fn remote_keys(&self) -> &PublicKeychain {
+        self.certificate().cert().keychain()
     }
 }
 
