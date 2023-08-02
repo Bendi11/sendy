@@ -7,6 +7,6 @@ mod ser;
 
 pub use rsa;
 
-pub use peer::{Peer, PeerConnection};
+pub use peer::Peer;
 
 pub use ser::{ToBytes, FromBytesError, FromBytes};

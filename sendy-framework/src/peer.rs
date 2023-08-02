@@ -7,20 +7,17 @@ use crate::{net::{sock::{ReliableSocketConnection, PacketKind}, msg::{ReceivedMe
 
 /// A connection to a remote peer over UDP, with state retrieved from a connection handshake
 pub struct Peer {
-    pub(crate) conn: PeerConnection,
+    pub(crate) conn: ReliableSocketConnection,
     /// The certificate of this peer, including public keys that can be used to encrypt and
     /// validate messages the peer sends
     pub(crate) cert: SignedCertificate,
 }
 
-/// A connection to a remote peer over UDP allowing two-way communication with the peer, see [Peer]
-/// for a structure that also contains state retrieved in a connection handshake
-pub struct PeerConnection(ReliableSocketConnection);
-
 /// Structure implementing [ToBytes] that allows stateful conversions to bytes using the
 /// [Context]'s cryptography keys
-struct ToBytesContext<'a, 'b, T: StatefulToBytes> {
+struct ToBytesContext<'a, 'b, 'c, T: StatefulToBytes> {
     ctx: &'a Context,
+    peer: &'c Peer,
     val: &'b T,
 }
 
@@ -31,39 +28,27 @@ impl Peer {
     }
 }
 
-impl Deref for Peer {
-    type Target = PeerConnection;
 
-    fn deref(&self) -> &Self::Target {
-        &self.conn
-    }
-}
-
-impl PeerConnection {
-    /// Create a new peer connection using the given socket state
-    pub(crate) fn new(conn: ReliableSocketConnection) -> Self {
-        Self(conn)
-    }
-    
+impl Peer {
     /// Get the IP address and port of the connected peer
     pub const fn remote(&self) -> &SocketAddr {
-        self.0.remote()
+        self.conn.remote()
     }
 
     /// Await the reception of a request from the connected peer
     #[inline]
     pub async fn recv(&self) -> ReceivedMessage {
-        self.0.recv().await
+        self.conn.recv().await
     }
 
     /// Send the given request message and await a response from the remote
     #[inline]
     pub async fn send_wait_response<'a, R: Request>(
-        &self,
+        &'a self,
         ctx: &'a Context,
         msg: &'a R,
     ) -> std::io::Result<impl Future<Output=Bytes> + 'a> {
-        ctx.socks.send_wait_response(&self.0, R::KIND, ToBytesContext { ctx, val: msg }).await
+        ctx.socks.send_wait_response(&self.conn, R::KIND, ToBytesContext { ctx, peer: self, val: msg }).await
     }
 
     /// Respond to the given request message with a payload only, no message kind needed
@@ -77,10 +62,10 @@ impl PeerConnection {
         ctx
             .socks
             .send_with_id(
-                &self.0,
+                &self.conn,
                 req.id,
                 PacketKind::Message(MessageKind::Respond),
-                ToBytesContext { ctx, val: &response },
+                ToBytesContext { ctx, peer: self, val: &response },
             )
             .await
     }
@@ -90,17 +75,17 @@ impl PeerConnection {
     #[inline]
     pub async fn send<R: Request>(&self, ctx: &Context, msg: R) -> std::io::Result<()> {
         ctx.socks
-            .send(&self.0, PacketKind::Message(R::KIND), ToBytesContext { ctx, val: &msg })
+            .send(&self.conn, PacketKind::Message(R::KIND), ToBytesContext { ctx, peer: self, val: &msg })
             .await
     }
 }
 
-impl<'a, 'b, T: StatefulToBytes> ToBytes for ToBytesContext<'a, 'b, T> {
+impl<'a, 'b, 'c, T: StatefulToBytes> ToBytes for ToBytesContext<'a, 'b, 'c, T> {
    fn write<W: bytes::BufMut>(&self, buf: W) {
-       self.val.stateful_write(self.ctx, buf)
+       self.val.stateful_write(self.ctx, self.peer, buf)
    }
 
     fn size_hint(&self) -> Option<usize> {
-        self.val.stateful_size_hint(self.ctx)
+        self.val.stateful_size_hint(self.ctx, self.peer)
     }
 }

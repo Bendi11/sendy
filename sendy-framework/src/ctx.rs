@@ -1,6 +1,6 @@
 use std::net::{IpAddr, SocketAddr};
 
-use crate::{net::{sock::ReliableSocket, msg::MessageKind}, model::crypto::{PrivateKeychain, SignedCertificate}, peer::{PeerConnection, Peer}, req::{ConnectAuthenticateRequest, ConnectAuthenticateResponse}, ser::{FromBytes, FromBytesError}};
+use crate::{net::{sock::{ReliableSocket, PacketKind}, msg::MessageKind}, model::crypto::{PrivateKeychain, SignedCertificate}, peer::Peer, req::{ConnectAuthenticateRequest, ConnectAuthenticateResponse, Request}, ser::{FromBytes, FromBytesError}};
 
 /// Shared state used to execute all peer to peer operations
 #[derive(Debug)]
@@ -32,20 +32,26 @@ impl Context {
     pub async fn connect(&self, peer: SocketAddr) -> Result<Peer, PeerConnectError> {
         let conn = self.socks.connect(peer).await?;
 
-        let peer = PeerConnection::new(conn);
-
-        let resp = peer
-                .send_wait_response(self, &ConnectAuthenticateRequest)
+        let resp = self
+                .socks
+                .send_wait_response(&conn, ConnectAuthenticateRequest::KIND, ConnectAuthenticateRequest)
                 .await?;
 
 
         let send_own = async {
             loop {
-                let msg = peer.recv().await;
+                let msg = conn.recv().await;
                 if msg.kind == MessageKind::AuthConnect {
-                    peer.respond(self, &msg, ConnectAuthenticateResponse {
-                        cert: self.certificate.clone(),
-                    }).await?;
+                    self
+                        .socks
+                        .send_with_id(
+                            &conn,
+                            msg.id,
+                            PacketKind::Message(MessageKind::Respond),
+                            ConnectAuthenticateResponse {
+                                cert: self.certificate.clone(),
+                            }
+                        ).await?;
                     break Result::<_, PeerConnectError>::Ok(())
                 }
             }
@@ -57,7 +63,7 @@ impl Context {
             let response = ConnectAuthenticateResponse::read_from_slice(&resp)?;
 
             if !response.cert.verify(&response.cert.cert().keychain().auth) ||
-                response.cert.cert().owner() != &peer.remote().ip() {
+                response.cert.cert().owner() != &conn.remote().ip() {
                 return Err(PeerConnectError::InvalidCertificateSignature)
             }
 
@@ -69,12 +75,11 @@ impl Context {
         let cert = cert?;
 
         Ok(Peer {
-            conn: peer,
+            conn,
             cert,
         })
     }
 }
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum PeerConnectError {
