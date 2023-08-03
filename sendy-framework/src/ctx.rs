@@ -1,11 +1,8 @@
 use std::net::{IpAddr, SocketAddr};
 
 use dashmap::DashMap;
-use parking_lot::Mutex;
-use slab::Slab;
-use tokio::sync::oneshot;
 
-use crate::{net::{sock::{ReliableSocket}, msg::{MessageKind, ReceivedMessage}}, model::crypto::{PrivateKeychain, SignedCertificate}, peer::Peer, req::{ConnectAuthenticate, Request}, ser::{FromBytes, FromBytesError}};
+use crate::{net::{sock::{ReliableSocket, PacketKind}, msg::{MessageKind, ReceivedMessage}}, model::crypto::{PrivateKeychain, SignedCertificate}, peer::Peer, req::{ConnectAuthenticate, Request}, ser::{FromBytes, FromBytesError}, ToBytes};
 
 /// Shared state used to execute all peer to peer operations
 #[derive(Debug)]
@@ -19,6 +16,13 @@ pub struct Context {
     certificate: SignedCertificate,
     /// Collection of the host's crypto keys
     pub(crate) keychain: PrivateKeychain,
+}
+
+/// Events that may be sent to the frontend via a channel
+#[derive(Debug)]
+pub enum SendyEvent {
+    /// A peer with the given information is attempting to make a connection
+    AttemptedPeerConnection,
 }
 
 #[derive(Debug)]
@@ -43,7 +47,7 @@ impl Context {
     
     /// Create a connection to the given IP address on the port specified by `peer`, exchanging
     /// authentication and encryption data with the peer
-    pub async fn connect(&self, peer: SocketAddr) -> Result<Peer, PeerConnectError> {
+    pub async fn connect(&self, peer: SocketAddr) -> Result<(), PeerConnectError> {
         let conn = self.socks.connect(peer).await?;
 
         let resp = self
@@ -58,27 +62,50 @@ impl Context {
             self
                 .socks
                 .send_wait_response(&conn, MessageKind::Terminate, ())
-                .await?;
+                .await?
+                .await;
 
             return Err(PeerConnectError::InvalidCertificateSignature)
         }
 
-        Ok(Peer {
-            conn,
-            cert: response.cert,
-        })
+        self
+            .authenticated_peers
+            .insert(peer.ip(), Peer { conn, cert: response.cert });
+
+        Ok(())
     }
 
     fn validate_cert(cert: &SignedCertificate, peer: &IpAddr) -> bool {
         cert.verify(&cert.cert().keychain().auth) &&
             cert.cert().owner() == peer
     }
-
-    async fn handle_request(&self, req: &ReceivedMessage) -> Result<(), FromBytesError> {
+    
+    /// Handle a single request from a remote
+    async fn handle_request(&self, req: &ReceivedMessage) -> Result<(), HandleRequestError> {
         match req.kind {
             MessageKind::AuthConnect => {
                 let msg = ConnectAuthenticate::read_from_slice(&req.bytes)?;
+                
+                match self.authenticated_peers.get(&req.from.ip()) {
+                    Some(peer) => {
+                        log::trace!("TODO: Authenticated peer send auth connect message")
+                    },
+                    None => {
+                        let conn = self.socks.connect(req.from).await?;
+                        
+                        self
+                            .socks
+                            .send_with_id(&conn, req.id, PacketKind::Message(MessageKind::Respond), self.certificate.write_to_vec())
+                            .await?;
 
+                        self
+                            .authenticated_peers
+                            .insert(req.from.ip(), Peer {
+                                conn,
+                                cert: msg.cert,
+                            });
+                    }
+                }
             },
             MessageKind::Test => (),
             MessageKind::InviteToChannel => {
@@ -108,4 +135,12 @@ pub enum PeerConnectError {
     AuthenticationTimeout,
     #[error("Peer's response could not be parsed")]
     Parse(#[from] FromBytesError),
+}
+
+#[derive(Debug, thiserror::Error)]
+enum HandleRequestError {
+    #[error("I/O error: {0}")]
+    IO(#[from] std::io::Error),
+    #[error("Failed to deserialize message: {0}")]
+    FromBytes(#[from] FromBytesError),
 }

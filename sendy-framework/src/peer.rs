@@ -36,6 +36,18 @@ impl Peer {
 }
 
 impl Peer {
+    /// Disconnect from this peer
+    pub async fn disconnect(self, ctx: &Context) -> std::io::Result<()> {
+        let _ = ctx
+            .socks
+            .send_wait_response(&self.conn, MessageKind::Terminate, ())
+            .await?
+            .await;
+
+        ctx.authenticated_peers.remove(&self.remote().ip());
+        Ok(())
+    }
+
     /// Get the IP address and port of the connected peer
     pub const fn remote(&self) -> &SocketAddr {
         self.conn.remote()

@@ -3,7 +3,7 @@ use std::ops::Deref;
 use bytes::BufMut;
 use rsa::{Pkcs1v15Encrypt, rand_core::OsRng, pkcs1v15::Signature};
 
-use crate::{net::msg::MessageKind, ser::{ToBytes, FromBytesError, FromBytes}, ctx::Context, model::{crypto::SignedCertificate, channel::UnkeyedChannel}, Peer};
+use crate::{net::msg::MessageKind, ser::{ToBytes, FromBytesError, FromBytes}, ctx::Context, Peer};
 
 pub mod invite;
 pub mod connect;

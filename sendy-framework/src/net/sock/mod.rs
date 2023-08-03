@@ -92,6 +92,18 @@ impl ReliableSocket {
         Self { internal, recvproc }
     }
     
+    /// Add a listener for messages on the given port
+    pub async fn new_binding(&self, port: u16) -> Result<(), std::io::Error> {
+        if !self.internal.socks.contains_key(&port) {
+            self.internal.socks.insert(
+                port,
+                UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)).await?,
+            );
+        }
+
+        Ok(())
+    }
+    
     /// Wait for a request to be sent to the host
     pub async fn recv(&self) -> (IpAddr, ReceivedMessage) {
         match self.recv.requests_r.lock().await.recv().await {
@@ -107,12 +119,7 @@ impl ReliableSocket {
 
     /// Create a new connection to the given address
     pub async fn connect(&self, addr: SocketAddr) -> std::io::Result<ReliableSocketConnection> {
-        if !self.internal.socks.contains_key(&addr.port()) {
-            self.internal.socks.insert(
-                addr.port(),
-                UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, addr.port())).await?,
-            );
-        }
+        self.new_binding(addr.port()).await?;
 
         Ok(ReliableSocketConnection {
             msgid: AtomicU8::new(1),
