@@ -39,18 +39,29 @@ pub struct SignedCertificate {
     signature: Signature,
 }
 
+/// Length in bytes of a SHA256 hash
+pub const SHA256_HASH_LEN_BYTES: usize = 32;
+
+/// A 32-byte user ID that is a hash of the user's public authentication key, used to shorten
+/// message lengths
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct UserId([u8 ; SHA256_HASH_LEN_BYTES]);
+
 /// A certificate claiming ownership over a set of public keys that has not yet been signed by a
 /// private key
 ///
 /// Format:
 /// ([PublicKeychain])
 /// ([IpAddr])
+/// ([String])
 #[derive(Clone, Debug)]
 pub struct UnsignedCertificate {
     /// The keys that the IP address in this certificate claims
     keys: PublicKeychain,
     /// The IP address of the peer that is claiming these keys
     owner: IpAddr,
+    /// Username that the peer wishes to use
+    username: String,
 }
 
 impl PrivateKeychain {
@@ -74,10 +85,11 @@ impl PrivateKeychain {
     
     /// Create a self-signed certificate stating that the given IP owns the public keys that
     /// correspond to the private keys stored in [self]
-    pub fn certificate(&self, owner: IpAddr) -> SignedCertificate {
+    pub fn certificate(&self, owner: IpAddr, username: String) -> SignedCertificate {
         let cert = UnsignedCertificate::new(
             self.public(),
             owner,
+            username,
         );
 
         cert.sign(&self.auth)
@@ -105,8 +117,8 @@ impl SignedCertificate {
 
 impl UnsignedCertificate {
     /// Create a new certificate which claims that `owner` owns `keys`
-    pub const fn new(keys: PublicKeychain, owner: IpAddr) -> Self {
-        Self { keys, owner }
+    pub const fn new(keys: PublicKeychain, owner: IpAddr, username: String) -> Self {
+        Self { keys, owner, username }
     }
 
     /// Turn this [UnsignedCertificate] into a [SignedCertificate] by signing the encoded
@@ -197,11 +209,13 @@ impl ToBytes for UnsignedCertificate {
     fn write<W: bytes::BufMut>(&self, mut buf: W) {
         self.keys.write(&mut buf);
         self.owner.write(&mut buf);
+        self.username.write(&mut buf);
     }
 
     fn size_hint(&self) -> Option<usize> {
         self.keys.size_hint()
             .and_then(|keysz| self.owner.size_hint().map(|sz| sz + keysz))
+            .and_then(|sz| self.username.size_hint().map(|s| s + sz))
     }
 }
 
@@ -210,6 +224,7 @@ impl FromBytes for UnsignedCertificate {
         Ok(Self {
             keys: PublicKeychain::parse(reader)?,
             owner: IpAddr::parse(reader)?,
+            username: String::parse(reader)?,
         })
     }
 }
@@ -266,6 +281,21 @@ impl FromBytes for RsaPublicKey {
             Ok(pubkey) => Ok(pubkey),
             Err(e) => Err(FromBytesError::Parsing(e.to_string())),
         }
+    }
+}
+
+impl ToBytes for UserId {
+    fn write<W: BufMut>(&self, buf: W) {
+        self.0.write(buf)
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        self.0.size_hint()
+    }
+}
+impl FromBytes for UserId {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        <[u8;SHA256_HASH_LEN_BYTES]>::parse(reader).map(Self)
     }
 }
 

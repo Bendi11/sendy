@@ -3,6 +3,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use bytes::{Buf, BufMut};
+use chrono::{Utc, NaiveDateTime};
 
 /// Trait to be implemented by all types that can be written to a byte buffer
 pub trait ToBytes: Sized {
@@ -245,5 +246,28 @@ impl<const N: usize> FromBytes for [u8 ; N] {
         }
 
         Ok(this)
+    }
+}
+
+/// Format:
+/// UNIX timestamp - 8 bytes
+impl ToBytes for chrono::DateTime<Utc> {
+    fn write<W: BufMut>(&self, buf: W) {
+        self.timestamp().write(buf)
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        self.timestamp().size_hint()
+    }
+}
+
+impl FromBytes for chrono::DateTime<Utc> {
+    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let ts = i64::parse(reader)?;
+        let naive = match NaiveDateTime::from_timestamp_millis(ts) {
+            Some(dt) => dt,
+            None => return Err(FromBytesError::Parsing(format!("Failed to read UTC timestamp: out of range")))
+        };
+        Ok(Self::from_utc(naive, Utc))
     }
 }
