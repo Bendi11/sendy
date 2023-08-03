@@ -2,7 +2,9 @@ use std::net::{IpAddr, SocketAddr};
 
 use dashmap::DashMap;
 
-use crate::{net::{sock::{ReliableSocket, PacketKind}, msg::{MessageKind, ReceivedMessage}}, model::crypto::{PrivateKeychain, SignedCertificate}, peer::Peer, req::{ConnectAuthenticate, Request}, ser::{FromBytes, FromBytesError}, ToBytes};
+use crate::{net::{sock::{ReliableSocket, PacketKind}, msg::{MessageKind, ReceivedMessage}}, model::{crypto::{PrivateKeychain, SignedCertificate}, channel::{ChannelId, KeyedChannel}}, peer::Peer, req::{ConnectAuthenticate, Request, ChannelInviteRequest, StatefulFromBytes, ChannelInviteResponse}, ser::{FromBytes, FromBytesError}, ToBytes};
+
+mod msgdb;
 
 /// Shared state used to execute all peer to peer operations
 #[derive(Debug)]
@@ -11,11 +13,20 @@ pub struct Context {
     pub(crate) socks: ReliableSocket,
     /// A collection of all peers that have been successfully authenticated
     pub(crate) authenticated_peers: DashMap<IpAddr, Peer>,
+    /// All persistent state for the context
+    pub(crate) state: ContextState,
     /// Self-signed certificate stating that the public IP of this node owns the public
     /// authentication and encryption keys it claims
     certificate: SignedCertificate,
     /// Collection of the host's crypto keys
     pub(crate) keychain: PrivateKeychain,
+}
+
+/// State that must be persisted across sessions
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ContextState {
+    /// Message channels that we have been invited to and generated the keys for
+    pub channels: DashMap<ChannelId, KeyedChannel>,
 }
 
 /// Events that may be sent to the frontend via a channel
@@ -25,11 +36,6 @@ pub enum SendyEvent {
     AttemptedPeerConnection,
 }
 
-#[derive(Debug)]
-enum AuthenticationState {
-    Authenticated(SignedCertificate),
-    AuthenticationFailed,
-}
 
 impl Context {
     /// Create a new global context from keychain and public IP
@@ -40,9 +46,15 @@ impl Context {
         Self {
             socks,
             authenticated_peers: DashMap::new(),
+            state: ContextState::default(),
             certificate,
             keychain,
         }
+    }
+    
+    /// Bind to the given port and listen for new messages
+    pub async fn listen(&self, port: u16) -> std::io::Result<()> {
+        self.socks.new_binding(port).await
     }
     
     /// Create a connection to the given IP address on the port specified by `peer`, exchanging
@@ -87,7 +99,7 @@ impl Context {
                 let msg = ConnectAuthenticate::read_from_slice(&req.bytes)?;
                 
                 match self.authenticated_peers.get(&req.from.ip()) {
-                    Some(peer) => {
+                    Some(_) => {
                         log::trace!("TODO: Authenticated peer send auth connect message")
                     },
                     None => {
@@ -109,7 +121,21 @@ impl Context {
             },
             MessageKind::Test => (),
             MessageKind::InviteToChannel => {
-                
+                let peer = self.authenticated_peers.get(&req.from.ip()).ok_or(HandleRequestError::NoPeer)?;
+                let ChannelInviteRequest { channel } = ChannelInviteRequest::stateful_read_from_slice(&self, &peer, &req.bytes)?;
+                let chid = channel.id;
+                let keyed = channel
+                    .into_inner()
+                    .into_inner()
+                    .gen_key()
+                    .map_err(|e| HandleRequestError::KDF { chid, e, })?;
+
+                self
+                    .state
+                    .channels
+                    .insert(chid, keyed);
+
+                peer.respond(&self, req, ChannelInviteResponse::ChannelJoined).await?;
             },
             MessageKind::Terminate => {
                 log::trace!("Connection terminated with {}", req.from);
@@ -143,4 +169,19 @@ enum HandleRequestError {
     IO(#[from] std::io::Error),
     #[error("Failed to deserialize message: {0}")]
     FromBytes(#[from] FromBytesError),
+    #[error("Failed to generate a symmetric key for channel {chid}: {e}")]
+    KDF {
+        chid: ChannelId,
+        e: argon2::Error,
+    },
+    #[error("Got a message from a peer that has not yet been authenticated")]
+    NoPeer,
+}
+
+impl Default for ContextState {
+    fn default() -> Self {
+        Self {
+            channels: DashMap::new(),
+        }
+    }
 }

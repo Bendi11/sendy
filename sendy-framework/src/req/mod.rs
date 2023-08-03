@@ -52,6 +52,9 @@ pub trait Response: StatefulToBytes + StatefulFromBytes {}
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct Encrypted<T>(T);
 
+impl<T> Encrypted<T> {
+    pub fn into_inner(self) -> T { self.0 }
+}
 impl<T> Deref for Encrypted<T> {
     type Target = T;
 
@@ -64,6 +67,15 @@ impl<T> Deref for Encrypted<T> {
 /// verified with a remote's public key when receieved
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct Signed<T>(T);
+impl<T> Signed<T> {
+    pub fn into_inner(self) -> T { self.0 }
+}
+impl<T> Deref for Signed<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl<T: ToBytes> StatefulToBytes for T {
     fn stateful_write<B: BufMut>(&self, _: &Context, _: &Peer, buf: B) { <Self as ToBytes>::write(self, buf) }

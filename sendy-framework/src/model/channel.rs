@@ -1,6 +1,8 @@
+use std::fmt;
+
 use argon2::Argon2;
 use bytes::BufMut;
-use chacha20poly1305::{aead::{generic_array, KeySizeUser}, ChaCha20Poly1305};
+use chacha20poly1305::{aead::KeySizeUser, ChaCha20Poly1305};
 use digest::{OutputSizeUser, Digest};
 use generic_array::GenericArray;
 use rsa::rand_core;
@@ -10,16 +12,15 @@ use sha2::Sha256;
 use crate::{ToBytes, FromBytes};
 
 /// A channel identifier created by hashing the [Channel]'s seed
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ChannelId(GenericArray<u8, <Sha256 as OutputSizeUser>::OutputSize>);
 
 /// A key derived from a channel's random seed used to encrypt channel messages
 pub type ChannelKey = GenericArray<u8, <ChaCha20Poly1305 as KeySizeUser>::KeySize>;
 
-
 /// A channel that should only be stored locally, contains the symmetric key that was generated
 /// from the transmitted random seed
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct KeyedChannel {
     /// All channel data that does not have to do with the symmetric key
     pub channel: UnkeyedChannel,
@@ -28,7 +29,10 @@ pub struct KeyedChannel {
 }
 
 /// Channel as it is sent to peers, without the generated symmetric key
-#[derive(Clone, Debug)]
+///
+/// Contains some metadata (currently only name) of the channel, the [Context](crate::ctx::Context)
+/// is responsible for actually storing messages sent to each channel
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct UnkeyedChannel {
     /// ID of the channel, generated from the seed
     pub id: ChannelId,
@@ -37,7 +41,7 @@ pub struct UnkeyedChannel {
     pub seed: [u8 ; 32],
     /// Randomly-generated salt used with a KDF to derive the symmetric key
     pub keysalt: [u8 ; 16],
-    /// Name of the channel, must be <= 128 BYTES (not unicode characters) long
+    /// Name of the channel
     pub name: String,
 }
 
@@ -144,5 +148,11 @@ impl FromBytes for ChannelId {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, crate::FromBytesError> {
         let id = u64::parse(reader)?;
         Ok(Self(*GenericArray::<u8, <Sha256 as OutputSizeUser>::OutputSize>::from_slice(&id.to_le_bytes())))
+    }
+}
+
+impl fmt::Display for ChannelId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:x}", self.0)
     }
 }
