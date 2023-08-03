@@ -5,6 +5,12 @@ use rsa::{Pkcs1v15Encrypt, rand_core::OsRng, pkcs1v15::Signature};
 
 use crate::{net::msg::MessageKind, ser::{ToBytes, FromBytesError, FromBytes}, ctx::Context, model::{crypto::SignedCertificate, channel::UnkeyedChannel}, Peer};
 
+pub mod invite;
+pub mod connect;
+
+pub use invite::*;
+pub use connect::*;
+
 /// A variation of [ToBytes] that allows types to use the global [Context]'s state including crypto
 /// keys
 pub trait StatefulToBytes {
@@ -58,55 +64,6 @@ impl<T> Deref for Encrypted<T> {
 /// verified with a remote's public key when receieved
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct Signed<T>(T);
-
-/// Request sent to a remote peer requesting the node send certificates with public keys for
-/// authentication and encryption
-pub struct ConnectAuthenticateRequest;
-impl Request for ConnectAuthenticateRequest {
-    const KIND: MessageKind = MessageKind::AuthConnect;
-}
-
-/// Response sent to a [ConnectAuthenticateRequest] with signed certificate
-pub struct ConnectAuthenticateResponse {
-    pub cert: SignedCertificate,
-}
-impl Response for ConnectAuthenticateResponse {}
-
-/// Request sent to invite a remote peer to a channel
-#[derive(Debug)]
-pub struct ChannelInviteRequest {
-    /// The channel that we are inviting a peer to, contains all **SECRET** information needed to
-    /// derive the channel public key
-    pub channel: UnkeyedChannel,
-}
-
-impl ToBytes for ConnectAuthenticateResponse {
-    fn write<W: BufMut>(&self, buf: W) {
-        self.cert.write(buf)
-    }
-
-    fn size_hint(&self) -> Option<usize> {
-        self.cert.size_hint()
-    }
-}
-impl FromBytes for ConnectAuthenticateResponse {
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        Ok(Self {
-            cert: SignedCertificate::parse(reader)?,
-        })
-    }
-}
-
-impl ToBytes for ConnectAuthenticateRequest {
-    fn write<W: BufMut>(&self, _: W) {}
-    fn size_hint(&self) -> Option<usize> { Some(0) }
-}
-impl FromBytes for ConnectAuthenticateRequest {
-    fn parse(_: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        Ok(Self)
-    }
-}
-
 
 impl<T: ToBytes> StatefulToBytes for T {
     fn stateful_write<B: BufMut>(&self, _: &Context, _: &Peer, buf: B) { <Self as ToBytes>::write(self, buf) }

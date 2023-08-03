@@ -3,7 +3,7 @@ mod recv;
 mod tx;
 
 use std::{
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, IpAddr},
     sync::{atomic::AtomicU8, Arc}, ops::Deref,
 };
 
@@ -50,8 +50,6 @@ pub(crate) struct ReliableSocketConnection {
     remote: SocketAddr,
     /// Counter used to create IDs for transmitted messages
     msgid: AtomicU8,
-    /// Channel that fully reassembled messages are sent to
-    recv: Mutex<Receiver<FinishedMessage>>,
     /// Congestion control to limit the number of messages that may be sent
     congestion: ReliableSocketCongestionControl,
 }
@@ -70,17 +68,6 @@ pub(crate) struct ReliableSocketInternal {
 }
 
 impl ReliableSocketConnection {
-    /// Await the next message being fully reassembled
-    pub async fn recv(&self) -> ReceivedMessage {
-        if let Some(next) = self.recv.lock().recv().await {
-            //Return the permit tracking buffer space used
-            drop(next.permit);
-            next.msg
-        } else {
-            panic!("Message receiver channel closed");
-        }
-    }
-    
     /// Get the address that this socket is connected to
     #[inline]
     pub const fn remote(&self) -> &SocketAddr {
@@ -104,14 +91,22 @@ impl ReliableSocket {
 
         Self { internal, recvproc }
     }
+    
+    /// Wait for a request to be sent to the host
+    pub async fn recv(&self) -> (IpAddr, ReceivedMessage) {
+        match self.recv.requests_r.lock().await.recv().await {
+            Some(msg) => (
+                msg.0,
+                msg.1.msg,
+            ),
+            None => {
+                panic!("Requests channel closed?");
+            }
+        }
+    }
 
     /// Create a new connection to the given address
     pub async fn connect(&self, addr: SocketAddr) -> std::io::Result<ReliableSocketConnection> {
-        let (sender, recv) = tokio::sync::mpsc::channel(16);
-        let recv = Mutex::new(recv);
-
-        self.internal.recv.requests.insert(addr.ip(), sender);
-
         if !self.internal.socks.contains_key(&addr.port()) {
             self.internal.socks.insert(
                 addr.port(),
@@ -122,7 +117,6 @@ impl ReliableSocket {
         Ok(ReliableSocketConnection {
             msgid: AtomicU8::new(1),
             remote: addr,
-            recv,
             congestion: ReliableSocketCongestionControl::new(&self.internal.cfg),
         })
     }

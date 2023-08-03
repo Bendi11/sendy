@@ -1,4 +1,4 @@
-use std::num::NonZeroU8;
+use std::{num::NonZeroU8, net::SocketAddr};
 
 use bytes::Bytes;
 
@@ -13,8 +13,13 @@ pub enum MessageKind {
     /// Signals that the following message introduction is in response to an already-sent message -
     /// the message ID of the packet is the message that this is reponding to
     Respond = PacketKind::MSG_TAG_OFFSET + 1,
+    /// Used to terminate a connection, requires an empty response message to be sent to confirm
+    /// termination
+    Terminate = PacketKind::MSG_TAG_OFFSET + 2,
     /// Transfer authentication public key + certificate and encryption public key
-    AuthConnect = PacketKind::MSG_TAG_OFFSET + 2,
+    AuthConnect = PacketKind::MSG_TAG_OFFSET + 3,
+    /// Invite a remote to connect to a channel with encryption seed
+    InviteToChannel = PacketKind::MSG_TAG_OFFSET + 4,
 }
 
 /// A message that has been received from a remote peer, but has not yet been parsed to a message
@@ -23,6 +28,8 @@ pub enum MessageKind {
 pub struct ReceivedMessage {
     /// Received message kind, used to instruct parsing
     pub kind: MessageKind,
+    /// Address of the peer that sent the message
+    pub from: SocketAddr,
     /// ID of the message as it was transmitted by the peer, used to respond to messages
     pub(crate) id: NonZeroU8,
     /// The payload of the message
@@ -36,7 +43,9 @@ impl TryFrom<u8> for MessageKind {
         Ok(match value.checked_sub(PacketKind::MSG_TAG_OFFSET) {
             Some(0) => Self::Test,
             Some(1) => Self::Respond,
-            Some(2) => Self::AuthConnect,
+            Some(2) => Self::Terminate,
+            Some(3) => Self::AuthConnect,
+            Some(4) => Self::InviteToChannel,
             _ => {
                 return Err(FromBytesError::Parsing(format!(
                     "Invalid message kind {:X}",

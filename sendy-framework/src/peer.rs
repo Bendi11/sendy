@@ -6,6 +6,7 @@ use futures::Future;
 use crate::{net::{sock::{ReliableSocketConnection, PacketKind}, msg::{ReceivedMessage, MessageKind}}, req::{Request, Response, StatefulToBytes}, ctx::Context, ser::ToBytes, model::crypto::{SignedCertificate, PublicKeychain}};
 
 /// A connection to a remote peer over UDP, with state retrieved from a connection handshake
+#[derive(Debug)]
 pub struct Peer {
     pub(crate) conn: ReliableSocketConnection,
     /// The certificate of this peer, including public keys that can be used to encrypt and
@@ -38,12 +39,6 @@ impl Peer {
     /// Get the IP address and port of the connected peer
     pub const fn remote(&self) -> &SocketAddr {
         self.conn.remote()
-    }
-
-    /// Await the reception of a request from the connected peer
-    #[inline]
-    pub async fn recv(&self) -> ReceivedMessage {
-        self.conn.recv().await
     }
 
     /// Send the given request message and await a response from the remote

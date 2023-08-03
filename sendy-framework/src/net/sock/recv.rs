@@ -11,7 +11,7 @@ use dashmap::DashMap;
 use hibitset::AtomicBitSet;
 use parking_lot::Mutex;
 use slab::Slab;
-use tokio::sync::{mpsc::Sender, oneshot, OwnedSemaphorePermit, RwLock, Semaphore};
+use tokio::sync::{mpsc::{Sender, Receiver}, oneshot, OwnedSemaphorePermit, RwLock, Semaphore};
 
 use crate::{
     net::{
@@ -29,16 +29,20 @@ use super::{
     ReliableSocketInternal, SocketConfig,
 };
 
+type TokioMutex<T> = tokio::sync::Mutex<T>;
+
 /// State required for a reliable socket's reception arm
 #[derive(Debug)]
 pub(crate) struct ReliableSocketRecv {
+    /// Receiver for new requests
+    pub requests_r: TokioMutex<Receiver<(IpAddr, FinishedMessage)>>,
     /// A map of message IDs from the given IP addresses and message IDs to the channel to send the
     /// message response to when received
     pub responses: DashMap<(IpAddr, NonZeroU8), oneshot::Sender<Bytes>>,
     /// A queue of messages that have finished being received, values here are still tracked by
     /// `buffered_bytes` and should update `buffered_bytes` when removed (this is handled in
     /// [ReliableSocketConnectionInternal](super::ReliableSocketConnectionInternal)
-    pub requests: DashMap<IpAddr, Sender<FinishedMessage>>,
+    pub requests_t: Sender<(IpAddr, FinishedMessage)>,
     /// A semaphore with [max_recv_mem](crate::net::sock::SocketConfig::max_recv_mem) permits
     /// available, one permit is equal to one byte
     pub recv_buf_permit: Arc<Semaphore>,
@@ -80,9 +84,12 @@ impl ReliableSocketRecv {
     ///
     /// See also: [spawn_recv_thread](ReliableSocketInternal::spawn_recv_thread)
     pub fn new(cfg: &SocketConfig) -> Self {
+        let (requests_t, requests_r) = tokio::sync::mpsc::channel(16);
+
         Self {
+            requests_r: TokioMutex::new(requests_r),
+            requests_t,
             responses: DashMap::new(),
-            requests: DashMap::new(),
             messages: RwLock::new(Slab::with_capacity(8)),
             recv_buf_permit: Arc::new(Semaphore::new(cfg.max_recv_mem)),
         }
@@ -355,25 +362,16 @@ impl ReliableSocketInternal {
                         }
                     }
                 }
-                _ => match self.recv.requests.get(&addr.ip()) {
-                    Some(sender) => {
-                        if let Err(e) = sender
-                            .send(FinishedMessage {
-                                permit: finished.permit,
-                                msg: ReceivedMessage {
-                                    kind: finished.kind,
-                                    id: finished.msg_id,
-                                    bytes,
-                                },
-                            })
-                            .await
-                        {
-                            log::error!("Failed to send reassembled message to queue: {}", e);
-                        }
-                    }
-                    None => {
-                        log::error!("Finished message from {} but no connection is listening from that address", addr);
-                    }
+                _ => if let Err(e) = self.recv.requests_t.send((addr.ip(), FinishedMessage {
+                    permit: finished.permit,
+                    msg: ReceivedMessage {
+                        kind: finished.kind,
+                        from: addr,
+                        id: finished.msg_id,
+                        bytes,
+                    },
+                })).await {
+                    log::error!("Failed to send request to channel: {}", e);
                 },
             }
         }
