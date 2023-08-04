@@ -265,6 +265,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "base64"
+version = "0.21.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "604178f6c5c21f02dc555784810edfb88d34ac2c73b2eae109655649ee73ce3d"
+
+[[package]]
 name = "base64ct"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1437,6 +1443,7 @@ name = "sendy-framework"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "base64",
  "bytes",
  "chacha20poly1305",
  "chrono",

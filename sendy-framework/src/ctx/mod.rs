@@ -39,8 +39,8 @@ pub enum SendyEvent {
 
 impl Context {
     /// Create a new global context from keychain and public IP
-    pub async fn new(keychain: PrivateKeychain, publicip: IpAddr) -> Self {
-        let certificate = keychain.certificate(publicip);
+    pub async fn new(keychain: PrivateKeychain, publicip: IpAddr, username: String) -> Self {
+        let certificate = keychain.certificate(publicip, username);
         let socks = ReliableSocket::new(Default::default()).await;
 
         Self {
