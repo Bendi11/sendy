@@ -1,9 +1,12 @@
-use std::{num::NonZeroU8, net::SocketAddr};
+use std::{net::SocketAddr, num::NonZeroU8};
 
 use bytes::Bytes;
 
 use super::sock::PacketKind;
-use crate::{ser::{FromBytes, FromBytesError, ToBytes}, req::{Request, Response}};
+use crate::{
+    req::{Request, Response},
+    ser::{FromBytes, FromBytesError, ToBytes},
+};
 
 /// An enumeration over all application layer messages that may be passed between nodes
 #[repr(u8)]
@@ -66,7 +69,7 @@ impl Request for TestMessage {
 
 impl FromBytes for TestMessage {
     fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        Ok(Self(crate::model::crypto::PublicKeychain::parse(buf)?)) 
+        Ok(Self(crate::model::crypto::PublicKeychain::parse(buf)?))
     }
 }
 

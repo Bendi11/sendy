@@ -1,9 +1,12 @@
 mod secret;
-use std::{net::{SocketAddrV4, Ipv4Addr}, time::Duration};
+use std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    time::Duration,
+};
 
 use clap::{Parser, Subcommand};
 
-use sendy_framework::{rsa, model::crypto::PrivateKeychain, ctx::Context};
+use sendy_framework::{ctx::Context, model::crypto::PrivateKeychain, rsa};
 
 #[derive(Parser)]
 #[command(name = "sendy")]
@@ -17,18 +20,28 @@ pub struct Cli {
 pub enum CliCommand {
     #[command(about = "Generate new RSA private keys and overwrite them in your secret storage")]
     KeyGen {
-        #[arg(short='s',long="size")]
+        #[arg(short = 's', long = "size")]
         #[arg(value_enum)]
         #[arg(default_value_t=RsaKeyWidth::Large)]
         bits: RsaKeyWidth,
     },
-    #[command(about = "Connect to the remote peer at the given address using keys stored in the secret storage")]
+    #[command(
+        about = "Connect to the remote peer at the given address using keys stored in the secret storage"
+    )]
     Connect {
-        #[arg(index=1, name="PEER", help="IP address and port of the remote peer")]
+        #[arg(
+            index = 1,
+            name = "PEER",
+            help = "IP address and port of the remote peer"
+        )]
         peer: SocketAddrV4,
-        #[arg(short='p', long="hostip", help="Public IP address of the local host")]
+        #[arg(
+            short = 'p',
+            long = "hostip",
+            help = "Public IP address of the local host"
+        )]
         publicip: Ipv4Addr,
-    }
+    },
 }
 
 #[repr(usize)]
@@ -64,13 +77,17 @@ async fn main() {
             let signature = rsa::RsaPrivateKey::new(&mut rng, bits as usize).unwrap();
             let encrypt = rsa::RsaPrivateKey::new(&mut rng, bits as usize).unwrap();
 
-            secret::SECRET_STORE.store(&PrivateKeychain::new(signature, encrypt)).await;
-        },
+            secret::SECRET_STORE
+                .store(&PrivateKeychain::new(signature, encrypt))
+                .await;
+        }
         CliCommand::Connect { peer, publicip } => {
             let keychain = match secret::SECRET_STORE.read().await {
                 Some(kc) => kc,
                 None => {
-                    log::error!("Failed to get secret keys from store, generating them for session");
+                    log::error!(
+                        "Failed to get secret keys from store, generating them for session"
+                    );
                     let mut rng = rsa::rand_core::OsRng::default();
                     let signature = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
                     let encrypt = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
@@ -78,8 +95,9 @@ async fn main() {
                     PrivateKeychain::new(signature, encrypt)
                 }
             };
-            
-            let ctx = Context::new(keychain, std::net::IpAddr::V4(publicip), "USER".to_owned()).await;
+
+            let ctx =
+                Context::new(keychain, std::net::IpAddr::V4(publicip), "USER".to_owned()).await;
             let _peer = ctx.connect(std::net::SocketAddr::V4(peer)).await.unwrap();
             println!("Valid peer connected");
 

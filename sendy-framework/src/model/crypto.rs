@@ -1,10 +1,15 @@
 use std::net::IpAddr;
 
 use bytes::BufMut;
-use rsa::{sha2::Sha256, pkcs1v15::{SigningKey, VerifyingKey, Signature}, RsaPublicKey, pkcs8::{EncodePublicKey, DecodePublicKey, EncodePrivateKey, DecodePrivateKey}, signature::{SignatureEncoding, Signer}, RsaPrivateKey};
+use rsa::{
+    pkcs1v15::{Signature, SigningKey, VerifyingKey},
+    pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
+    sha2::Sha256,
+    signature::{SignatureEncoding, Signer},
+    RsaPrivateKey, RsaPublicKey,
+};
 
-use crate::ser::{FromBytes, ToBytes, FromBytesError};
-
+use crate::ser::{FromBytes, FromBytesError, ToBytes};
 
 /// A collection of public **and private** cryptographic keys used to sign
 /// and decrypt messages, this should never be shared and does not implement to and from Bytes
@@ -45,7 +50,7 @@ pub const SHA256_HASH_LEN_BYTES: usize = 32;
 /// A 32-byte user ID that is a hash of the user's public authentication key, used to shorten
 /// message lengths
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub struct UserId([u8 ; SHA256_HASH_LEN_BYTES]);
+pub struct UserId([u8; SHA256_HASH_LEN_BYTES]);
 
 /// A certificate claiming ownership over a set of public keys that has not yet been signed by a
 /// private key
@@ -72,7 +77,7 @@ impl PrivateKeychain {
             enc,
         }
     }
-    
+
     /// Get a public keychain that corresponds to the private keys held in [self]
     pub fn public(&self) -> PublicKeychain {
         use rsa::signature::Keypair;
@@ -82,15 +87,11 @@ impl PrivateKeychain {
             enc: self.enc.to_public_key(),
         }
     }
-    
+
     /// Create a self-signed certificate stating that the given IP owns the public keys that
     /// correspond to the private keys stored in [self]
     pub fn certificate(&self, owner: IpAddr, username: String) -> SignedCertificate {
-        let cert = UnsignedCertificate::new(
-            self.public(),
-            owner,
-            username,
-        );
+        let cert = UnsignedCertificate::new(self.public(), owner, username);
 
         cert.sign(&self.auth)
     }
@@ -103,12 +104,12 @@ impl SignedCertificate {
 
         key.verify(&self.encoded, &self.signature).is_ok()
     }
-    
+
     /// Get the certificate data from this signed certificate
     pub const fn cert(&self) -> &UnsignedCertificate {
         &self.repr
     }
-    
+
     /// Get the signature that authenticates the certificate
     pub const fn signature(&self) -> &Signature {
         &self.signature
@@ -118,7 +119,11 @@ impl SignedCertificate {
 impl UnsignedCertificate {
     /// Create a new certificate which claims that `owner` owns `keys`
     pub const fn new(keys: PublicKeychain, owner: IpAddr, username: String) -> Self {
-        Self { keys, owner, username }
+        Self {
+            keys,
+            owner,
+            username,
+        }
     }
 
     /// Turn this [UnsignedCertificate] into a [SignedCertificate] by signing the encoded
@@ -134,12 +139,12 @@ impl UnsignedCertificate {
             signature,
         }
     }
-    
+
     /// Get the public keys that the owner is claiming
     pub const fn keychain(&self) -> &PublicKeychain {
         &self.keys
     }
-    
+
     /// Get the IP address of owner of these public keys
     pub const fn owner(&self) -> &IpAddr {
         &self.owner
@@ -156,7 +161,8 @@ impl ToBytes for SignedCertificate {
     }
 
     fn size_hint(&self) -> Option<usize> {
-        self.repr.size_hint()
+        self.repr
+            .size_hint()
             .zip(self.signature.size_hint())
             .zip((self.encoded.len() as u16).size_hint())
             .map(|((sz1, sz2), sz3)| sz1 + sz2 + sz3)
@@ -213,7 +219,8 @@ impl ToBytes for UnsignedCertificate {
     }
 
     fn size_hint(&self) -> Option<usize> {
-        self.keys.size_hint()
+        self.keys
+            .size_hint()
             .and_then(|keysz| self.owner.size_hint().map(|sz| sz + keysz))
             .and_then(|sz| self.username.size_hint().map(|s| s + sz))
     }
@@ -231,13 +238,14 @@ impl FromBytes for UnsignedCertificate {
 
 /// Format: ([authkey](VerifyingKey), [encryptkey](RsaPublicKey))
 impl ToBytes for PublicKeychain {
-    fn write<W: BufMut>(&self, mut buf : W) {
+    fn write<W: BufMut>(&self, mut buf: W) {
         self.auth.write(&mut buf);
         self.enc.write(&mut buf);
     }
 
     fn size_hint(&self) -> Option<usize> {
-        self.auth.size_hint()
+        self.auth
+            .size_hint()
             .and_then(|authsz| self.enc.size_hint().map(|sz| sz + authsz))
     }
 }
@@ -262,10 +270,10 @@ impl ToBytes for RsaPublicKey {
             Err(e) => {
                 log::error!("Failed to encode RSA public key as DER: {}", e);
                 0u16.write(buf);
-                return
+                return;
             }
         };
-        
+
         let der = der.as_bytes();
         (der.len() as u16).write(&mut buf);
         buf.put_slice(der);
@@ -295,7 +303,7 @@ impl ToBytes for UserId {
 }
 impl FromBytes for UserId {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        <[u8;SHA256_HASH_LEN_BYTES]>::parse(reader).map(Self)
+        <[u8; SHA256_HASH_LEN_BYTES]>::parse(reader).map(Self)
     }
 }
 
@@ -323,10 +331,10 @@ impl ToBytes for RsaPrivateKey {
             Err(e) => {
                 log::error!("Failed to encode RSA public key as DER: {}", e);
                 0u16.write(buf);
-                return
+                return;
             }
         };
-        
+
         let der = der.as_bytes();
         (der.len() as u16).write(&mut buf);
         buf.put_slice(der);

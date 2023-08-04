@@ -3,8 +3,9 @@ mod recv;
 mod tx;
 
 use std::{
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4, IpAddr},
-    sync::{atomic::AtomicU8, Arc}, ops::Deref,
+    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
+    ops::Deref,
+    sync::{atomic::AtomicU8, Arc},
 };
 
 use dashmap::DashMap;
@@ -91,7 +92,7 @@ impl ReliableSocket {
 
         Self { internal, recvproc }
     }
-    
+
     /// Add a listener for messages on the given port
     pub async fn new_binding(&self, port: u16) -> Result<(), std::io::Error> {
         if !self.internal.socks.contains_key(&port) {
@@ -103,14 +104,11 @@ impl ReliableSocket {
 
         Ok(())
     }
-    
+
     /// Wait for a request to be sent to the host
     pub async fn recv(&self) -> (IpAddr, ReceivedMessage) {
         match self.recv.requests_r.lock().await.recv().await {
-            Some(msg) => (
-                msg.0,
-                msg.1.msg,
-            ),
+            Some(msg) => (msg.0, msg.1.msg),
             None => {
                 panic!("Requests channel closed?");
             }

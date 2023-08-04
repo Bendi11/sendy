@@ -9,4 +9,4 @@ pub use rsa;
 
 pub use peer::Peer;
 
-pub use ser::{ToBytes, FromBytesError, FromBytes};
+pub use ser::{FromBytes, FromBytesError, ToBytes};

@@ -1,9 +1,13 @@
 use bytes::BufMut;
 
-use crate::{net::msg::MessageKind, ctx::Context, Peer, model::channel::UnkeyedChannel, ToBytes, FromBytes, FromBytesError};
+use crate::{
+    ctx::Context, model::channel::UnkeyedChannel, net::msg::MessageKind, FromBytes, FromBytesError,
+    Peer, ToBytes,
+};
 
-use super::{Request, StatefulToBytes, Encrypted, Signed, StatefulFromBytes, Response, SerializationState};
-
+use super::{
+    Encrypted, Request, Response, SerializationState, Signed, StatefulFromBytes, StatefulToBytes,
+};
 
 /// Request sent to invite a remote peer to a channel
 #[derive(Debug)]
@@ -21,7 +25,6 @@ pub enum ChannelInviteResponse {
     ChannelNotJoined = 2,
 }
 
-
 impl Request for ChannelInviteRequest {
     const KIND: MessageKind = MessageKind::InviteToChannel;
 }
@@ -32,8 +35,12 @@ impl StatefulToBytes for ChannelInviteRequest {
 }
 
 impl StatefulFromBytes for ChannelInviteRequest {
-    fn stateful_parse(state: SerializationState<'_>, buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        Signed::<Encrypted::<UnkeyedChannel>>::stateful_parse(state, buf).map(|channel| Self { channel })
+    fn stateful_parse(
+        state: SerializationState<'_>,
+        buf: &mut untrusted::Reader<'_>,
+    ) -> Result<Self, FromBytesError> {
+        Signed::<Encrypted<UnkeyedChannel>>::stateful_parse(state, buf)
+            .map(|channel| Self { channel })
     }
 }
 
@@ -53,7 +60,12 @@ impl FromBytes for ChannelInviteResponse {
         Ok(match tag {
             1 => Self::ChannelJoined,
             2 => Self::ChannelNotJoined,
-            other => return Err(FromBytesError::Parsing(format!("Unknown channel invite response tag: {}", other)))
+            other => {
+                return Err(FromBytesError::Parsing(format!(
+                    "Unknown channel invite response tag: {}",
+                    other
+                )))
+            }
         })
     }
 }

@@ -3,7 +3,8 @@ use std::{
     io::ErrorKind,
     net::{IpAddr, SocketAddr},
     num::NonZeroU8,
-    sync::{self, atomic::AtomicU16, Arc}, time::Duration,
+    sync::{self, atomic::AtomicU16, Arc},
+    time::Duration,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -11,7 +12,10 @@ use dashmap::DashMap;
 use hibitset::AtomicBitSet;
 use parking_lot::Mutex;
 use slab::Slab;
-use tokio::sync::{mpsc::{Sender, Receiver}, oneshot, OwnedSemaphorePermit, RwLock, Semaphore};
+use tokio::sync::{
+    mpsc::{Receiver, Sender},
+    oneshot, OwnedSemaphorePermit, RwLock, Semaphore,
+};
 
 use crate::{
     net::{
@@ -102,7 +106,7 @@ impl ReliableSocketInternal {
             loop {
                 if self.socks.is_empty() {
                     tokio::time::sleep(Duration::from_secs(1)).await;
-                    continue
+                    continue;
                 }
 
                 let reads = self.socks.iter().map(|sock| {
@@ -336,7 +340,7 @@ impl ReliableSocketInternal {
 
             let bytes = if finished.blocks.len() > 0 {
                 let mut reassemble = finished.blocks.remove(0).into_inner();
-                
+
                 for block in finished.blocks.into_iter() {
                     reassemble.unsplit(block.into_inner());
                 }
@@ -362,17 +366,27 @@ impl ReliableSocketInternal {
                         }
                     }
                 }
-                _ => if let Err(e) = self.recv.requests_t.send((addr.ip(), FinishedMessage {
-                    permit: finished.permit,
-                    msg: ReceivedMessage {
-                        kind: finished.kind,
-                        from: addr,
-                        id: finished.msg_id,
-                        bytes,
-                    },
-                })).await {
-                    log::error!("Failed to send request to channel: {}", e);
-                },
+                _ => {
+                    if let Err(e) = self
+                        .recv
+                        .requests_t
+                        .send((
+                            addr.ip(),
+                            FinishedMessage {
+                                permit: finished.permit,
+                                msg: ReceivedMessage {
+                                    kind: finished.kind,
+                                    from: addr,
+                                    id: finished.msg_id,
+                                    bytes,
+                                },
+                            },
+                        ))
+                        .await
+                    {
+                        log::error!("Failed to send request to channel: {}", e);
+                    }
+                }
             }
         }
     }

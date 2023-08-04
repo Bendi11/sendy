@@ -1,12 +1,12 @@
 use bytes::BufMut;
 use chrono::{DateTime, Utc};
 
-use crate::{ToBytes, FromBytes};
+use crate::{FromBytes, ToBytes};
 
 use super::crypto::{UserId, SHA256_HASH_LEN_BYTES};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct ChatMessageId(pub(crate) [u8 ; SHA256_HASH_LEN_BYTES]);
+pub struct ChatMessageId(pub(crate) [u8; SHA256_HASH_LEN_BYTES]);
 
 /// Data of a message that is allowed to be unencrypted when sent to other peers
 #[derive(Debug)]
@@ -30,7 +30,7 @@ impl ToBytes for ChatMessageId {
 }
 impl FromBytes for ChatMessageId {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, crate::FromBytesError> {
-        <[u8;SHA256_HASH_LEN_BYTES]>::parse(reader).map(Self)
+        <[u8; SHA256_HASH_LEN_BYTES]>::parse(reader).map(Self)
     }
 }
 
@@ -48,7 +48,8 @@ impl ToBytes for ChatMessageMetadata {
     }
 
     fn size_hint(&self) -> Option<usize> {
-        self.author.size_hint()
+        self.author
+            .size_hint()
             .zip(self.id.size_hint())
             .zip(self.timestamp.size_hint())
             .map(|((s1, s2), s3)| s1 + s2 + s3)

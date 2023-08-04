@@ -1,10 +1,10 @@
 use bytes::BufMut;
 
-use crate::{ToBytes, FromBytes, model::crypto::SignedCertificate, FromBytesError, net::msg::MessageKind};
+use crate::{
+    model::crypto::SignedCertificate, net::msg::MessageKind, FromBytes, FromBytesError, ToBytes,
+};
 
 use super::{Request, Response};
-
-
 
 /// Request sent to a remote peer requesting the node send certificates with public keys for
 /// authentication and encryption
@@ -16,7 +16,6 @@ impl Response for ConnectAuthenticate {}
 impl Request for ConnectAuthenticate {
     const KIND: MessageKind = MessageKind::AuthConnect;
 }
-
 
 impl ToBytes for ConnectAuthenticate {
     fn write<W: BufMut>(&self, buf: W) {
@@ -34,5 +33,3 @@ impl FromBytes for ConnectAuthenticate {
         })
     }
 }
-
-

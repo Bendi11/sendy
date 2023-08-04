@@ -17,7 +17,8 @@ use tokio::{
 };
 
 use crate::{
-    ser::{FromBytes, ToBytes}, net::msg::MessageKind,
+    net::msg::MessageKind,
+    ser::{FromBytes, ToBytes},
 };
 
 use super::{
@@ -86,7 +87,7 @@ impl ReliableSocketInternal {
         let recv = self.wait_response(conn.remote.ip(), msgid);
         self.send_with_id(conn, msgid, PacketKind::Message(kind), req)
             .await?;
-        
+
         Ok(async {
             match recv.await {
                 Ok(msg) => msg,
@@ -326,7 +327,11 @@ impl MessageSplitter {
             kind,
             id: PacketId {
                 msgid: self.msgid,
-                blockid: if self.bytes_till_split == MAX_SAFE_UDP_PAYLOAD - HEADER_SZ { 0 } else { self.blockid },
+                blockid: if self.bytes_till_split == MAX_SAFE_UDP_PAYLOAD - HEADER_SZ {
+                    0
+                } else {
+                    self.blockid
+                },
             },
             //Checksum is a placeholder until the full packet is written
             checksum: 0,
@@ -363,7 +368,10 @@ unsafe impl BufMut for MessageSplitter {
 
 #[cfg(test)]
 mod tests {
-    use crate::{net::msg::{MessageKind, TestMessage}, req::Request};
+    use crate::{
+        net::msg::{MessageKind, TestMessage},
+        req::Request,
+    };
 
     use super::*;
 

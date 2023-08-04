@@ -3,7 +3,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use bytes::{Buf, BufMut};
-use chrono::{Utc, NaiveDateTime};
+use chrono::{NaiveDateTime, Utc};
 
 /// Trait to be implemented by all types that can be written to a byte buffer
 pub trait ToBytes: Sized {
@@ -14,7 +14,7 @@ pub trait ToBytes: Sized {
     fn size_hint(&self) -> Option<usize> {
         None
     }
-    
+
     /// Write the full representation of [self] to a vec of bytes
     fn write_to_vec(&self) -> Vec<u8> {
         let mut buf = Vec::<u8>::with_capacity(self.size_hint().unwrap_or(0));
@@ -29,7 +29,7 @@ pub trait FromBytes: Sized {
     /// Read bytes the given buffer (multi-byte words should be little endian) to create an
     /// instance of `Self`
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError>;
-    
+
     /// Helper function to read an instance of [self] without needing to create [untrusted] types
     fn read_from_slice(slice: &[u8]) -> Result<Self, FromBytesError> {
         let mut reader = untrusted::Reader::new(untrusted::Input::from(slice));
@@ -101,7 +101,6 @@ integral_from_to_bytes! {i16: get_i16_le, put_i16_le}
 integral_from_to_bytes! {i32: get_i32_le, put_i32_le}
 integral_from_to_bytes! {i64: get_i64_le, put_i64_le}
 
-
 impl ToBytes for () {
     fn write<W: BufMut>(&self, _buf: W) {}
     fn size_hint(&self) -> Option<usize> {
@@ -138,7 +137,7 @@ impl ToBytes for IpAddr {
             Self::V4(v4addr) => {
                 buf.put_u8(IPVERSION_MARKER_V4);
                 v4addr.write(buf);
-            },
+            }
             Self::V6(v6addr) => {
                 buf.put_u8(IPVERSION_MARKER_V6);
                 v6addr.write(buf);
@@ -150,7 +149,8 @@ impl ToBytes for IpAddr {
         match self {
             Self::V4(addr) => addr.size_hint(),
             Self::V6(addr) => addr.size_hint(),
-        }.map(|sz| sz + 1)
+        }
+        .map(|sz| sz + 1)
     }
 }
 
@@ -160,7 +160,12 @@ impl FromBytes for IpAddr {
         Ok(match marker {
             IPVERSION_MARKER_V4 => Self::V4(Ipv4Addr::parse(reader)?),
             IPVERSION_MARKER_V6 => Self::V6(Ipv6Addr::parse(reader)?),
-            _ => return Err(FromBytesError::Parsing(format!("Unknown IP version marker {:X}", marker))),
+            _ => {
+                return Err(FromBytesError::Parsing(format!(
+                    "Unknown IP version marker {:X}",
+                    marker
+                )))
+            }
         })
     }
 }
@@ -175,7 +180,7 @@ impl ToBytes for Ipv4Addr {
 
 impl FromBytes for Ipv4Addr {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let mut buf = [0u8 ; 4];
+        let mut buf = [0u8; 4];
         for idx in 0..buf.len() {
             buf[idx] = reader.read_byte()?;
         }
@@ -190,7 +195,7 @@ impl ToBytes for Ipv6Addr {
         let octets = self.octets();
         buf.put_slice(&octets);
     }
-    
+
     fn size_hint(&self) -> Option<usize> {
         Some(16)
     }
@@ -198,7 +203,7 @@ impl ToBytes for Ipv6Addr {
 
 impl FromBytes for Ipv6Addr {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let mut buf = [0u8 ; 16];
+        let mut buf = [0u8; 16];
         for idx in 0..buf.len() {
             buf[idx] = reader.read_byte()?;
         }
@@ -228,7 +233,7 @@ impl FromBytes for String {
     }
 }
 
-impl<const N: usize> ToBytes for [u8 ; N] {
+impl<const N: usize> ToBytes for [u8; N] {
     fn write<W: BufMut>(&self, mut buf: W) {
         buf.put_slice(self.as_slice())
     }
@@ -238,9 +243,9 @@ impl<const N: usize> ToBytes for [u8 ; N] {
     }
 }
 
-impl<const N: usize> FromBytes for [u8 ; N] {
+impl<const N: usize> FromBytes for [u8; N] {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let mut this = [0u8 ; N];
+        let mut this = [0u8; N];
         for idx in 0..N {
             this[idx] = reader.read_byte()?;
         }
@@ -266,7 +271,11 @@ impl FromBytes for chrono::DateTime<Utc> {
         let ts = i64::parse(reader)?;
         let naive = match NaiveDateTime::from_timestamp_millis(ts) {
             Some(dt) => dt,
-            None => return Err(FromBytesError::Parsing(format!("Failed to read UTC timestamp: out of range")))
+            None => {
+                return Err(FromBytesError::Parsing(format!(
+                    "Failed to read UTC timestamp: out of range"
+                )))
+            }
         };
         Ok(Self::from_utc(naive, Utc))
     }

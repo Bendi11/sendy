@@ -2,7 +2,23 @@ use std::net::{IpAddr, SocketAddr};
 
 use dashmap::DashMap;
 
-use crate::{net::{sock::{ReliableSocket, PacketKind}, msg::{MessageKind, ReceivedMessage}}, model::{crypto::{PrivateKeychain, SignedCertificate}, channel::{ChannelId, KeyedChannel}}, peer::Peer, req::{ConnectAuthenticate, Request, ChannelInviteRequest, StatefulFromBytes, ChannelInviteResponse, SerializationState}, ser::{FromBytes, FromBytesError}, ToBytes};
+use crate::{
+    model::{
+        channel::{ChannelId, KeyedChannel},
+        crypto::{PrivateKeychain, SignedCertificate},
+    },
+    net::{
+        msg::{MessageKind, ReceivedMessage},
+        sock::{PacketKind, ReliableSocket},
+    },
+    peer::Peer,
+    req::{
+        ChannelInviteRequest, ChannelInviteResponse, ConnectAuthenticate, Request,
+        SerializationState, StatefulFromBytes,
+    },
+    ser::{FromBytes, FromBytesError},
+    ToBytes,
+};
 
 use self::msgdb::MessageDatabase;
 
@@ -40,7 +56,6 @@ pub enum SendyEvent {
     AttemptedPeerConnection,
 }
 
-
 impl Context {
     /// Create a new global context from keychain and public IP
     pub async fn new(keychain: PrivateKeychain, publicip: IpAddr, username: String) -> Self {
@@ -55,98 +70,120 @@ impl Context {
             keychain,
         }
     }
-    
+
     /// Bind to the given port and listen for new messages
     pub async fn listen(&self, port: u16) -> std::io::Result<()> {
         self.socks.new_binding(port).await
     }
-    
+
     /// Create a connection to the given IP address on the port specified by `peer`, exchanging
     /// authentication and encryption data with the peer
     pub async fn connect(&self, peer: SocketAddr) -> Result<(), PeerConnectError> {
         let conn = self.socks.connect(peer).await?;
 
         let resp = self
-                .socks
-                .send_wait_response(&conn, ConnectAuthenticate::KIND, ConnectAuthenticate { cert: self.certificate.clone() })
-                .await?;
-        
+            .socks
+            .send_wait_response(
+                &conn,
+                ConnectAuthenticate::KIND,
+                ConnectAuthenticate {
+                    cert: self.certificate.clone(),
+                },
+            )
+            .await?;
+
         let resp = resp.await;
         let response = ConnectAuthenticate::read_from_slice(&resp)?;
 
         if !Self::validate_cert(&response.cert, &peer.ip()) {
-            self
-                .socks
+            self.socks
                 .send_wait_response(&conn, MessageKind::Terminate, ())
                 .await?
                 .await;
 
-            return Err(PeerConnectError::InvalidCertificateSignature)
+            return Err(PeerConnectError::InvalidCertificateSignature);
         }
 
-        self
-            .authenticated_peers
-            .insert(peer.ip(), Peer { conn, cert: response.cert });
+        self.authenticated_peers.insert(
+            peer.ip(),
+            Peer {
+                conn,
+                cert: response.cert,
+            },
+        );
 
         Ok(())
     }
 
     fn validate_cert(cert: &SignedCertificate, peer: &IpAddr) -> bool {
-        cert.verify(&cert.cert().keychain().auth) &&
-            cert.cert().owner() == peer
+        cert.verify(&cert.cert().keychain().auth) && cert.cert().owner() == peer
     }
-    
+
     /// Handle a single request from a remote
     async fn handle_request(&self, req: &ReceivedMessage) -> Result<(), HandleRequestError> {
         match req.kind {
             MessageKind::AuthConnect => {
                 let msg = ConnectAuthenticate::read_from_slice(&req.bytes)?;
-                
+
                 match self.authenticated_peers.get(&req.from.ip()) {
                     Some(_) => {
                         log::trace!("TODO: Authenticated peer send auth connect message")
-                    },
+                    }
                     None => {
                         let conn = self.socks.connect(req.from).await?;
-                        
-                        self
-                            .socks
-                            .send_with_id(&conn, req.id, PacketKind::Message(MessageKind::Respond), self.certificate.write_to_vec())
+
+                        self.socks
+                            .send_with_id(
+                                &conn,
+                                req.id,
+                                PacketKind::Message(MessageKind::Respond),
+                                self.certificate.write_to_vec(),
+                            )
                             .await?;
 
-                        self
-                            .authenticated_peers
-                            .insert(req.from.ip(), Peer {
+                        self.authenticated_peers.insert(
+                            req.from.ip(),
+                            Peer {
                                 conn,
                                 cert: msg.cert,
-                            });
+                            },
+                        );
                     }
                 }
-            },
+            }
             MessageKind::Test => (),
             MessageKind::InviteToChannel => {
-                let peer = self.authenticated_peers.get(&req.from.ip()).ok_or(HandleRequestError::NoPeer)?;
-                let ChannelInviteRequest { channel } = ChannelInviteRequest::stateful_read_from_slice(SerializationState { ctx: self, peer: &peer, channel: None }, &req.bytes)?;
+                let peer = self
+                    .authenticated_peers
+                    .get(&req.from.ip())
+                    .ok_or(HandleRequestError::NoPeer)?;
+                let ChannelInviteRequest { channel } =
+                    ChannelInviteRequest::stateful_read_from_slice(
+                        SerializationState {
+                            ctx: self,
+                            peer: &peer,
+                            channel: None,
+                        },
+                        &req.bytes,
+                    )?;
                 let chid = channel.id;
                 let keyed = channel
                     .into_inner()
                     .into_inner()
                     .gen_key()
-                    .map_err(|e| HandleRequestError::KDF { chid, e, })?;
+                    .map_err(|e| HandleRequestError::KDF { chid, e })?;
 
-                self
-                    .state
-                    .channels
-                    .insert(chid, keyed);
+                self.state.channels.insert(chid, keyed);
 
-                peer.respond(&self, req, ChannelInviteResponse::ChannelJoined).await?;
-            },
+                peer.respond(&self, req, ChannelInviteResponse::ChannelJoined)
+                    .await?;
+            }
             MessageKind::Terminate => {
                 log::trace!("Connection terminated with {}", req.from);
-            },
+            }
             MessageKind::Respond => {
                 log::error!("Unhandled respond message");
-            },
+            }
         }
 
         Ok(())
@@ -174,10 +211,7 @@ enum HandleRequestError {
     #[error("Failed to deserialize message: {0}")]
     FromBytes(#[from] FromBytesError),
     #[error("Failed to generate a symmetric key for channel {chid}: {e}")]
-    KDF {
-        chid: ChannelId,
-        e: argon2::Error,
-    },
+    KDF { chid: ChannelId, e: argon2::Error },
     #[error("Got a message from a peer that has not yet been authenticated")]
     NoPeer,
 }

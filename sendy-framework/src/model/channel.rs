@@ -3,13 +3,13 @@ use std::fmt;
 use argon2::Argon2;
 use bytes::BufMut;
 use chacha20poly1305::{aead::KeySizeUser, ChaCha20Poly1305};
-use digest::{OutputSizeUser, Digest};
+use digest::{Digest, OutputSizeUser};
 use generic_array::GenericArray;
+use rand_core::{OsRng, RngCore};
 use rsa::rand_core;
-use rand_core::{RngCore, OsRng};
 use sha2::Sha256;
 
-use crate::{ToBytes, FromBytes};
+use crate::{FromBytes, ToBytes};
 
 /// A channel identifier created by hashing the [Channel]'s seed
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -38,9 +38,9 @@ pub struct UnkeyedChannel {
     pub id: ChannelId,
     /// Randomly generated seed that is hashed to produce the channel ID and put through a KDF to
     /// generate the symmetric channel key
-    pub seed: [u8 ; 32],
+    pub seed: [u8; 32],
     /// Randomly-generated salt used with a KDF to derive the symmetric key
-    pub keysalt: [u8 ; 16],
+    pub keysalt: [u8; 16],
     /// Name of the channel
     pub name: String,
 }
@@ -49,32 +49,28 @@ impl UnkeyedChannel {
     /// Derive the symmetric key used to encrypt and decrypt messages from this channel
     pub fn gen_key(self) -> argon2::Result<KeyedChannel> {
         let argon = Argon2::default();
-        
-        let mut key = [0u8 ; 32];
-        argon.hash_password_into(
-            &self.seed,
-            &self.keysalt,
-            &mut key
-        )?;
+
+        let mut key = [0u8; 32];
+        argon.hash_password_into(&self.seed, &self.keysalt, &mut key)?;
 
         Ok(KeyedChannel {
             channel: self,
             key: key.into(),
         })
     }
-    
+
     /// Create a new channel, randomly generating the seed and symmetric key salts and hashing a
     /// [ChannelId]
     pub fn new(name: String) -> Self {
         let mut rng = OsRng;
-        
-        let mut seed = [0u8 ; 32];
-        let mut keysalt = [0u8 ; 16];
+
+        let mut seed = [0u8; 32];
+        let mut keysalt = [0u8; 16];
         rng.fill_bytes(&mut seed);
         rng.fill_bytes(&mut keysalt);
 
         let id = ChannelId::hash(&seed);
-        
+
         Self {
             id,
             seed,
@@ -86,14 +82,13 @@ impl UnkeyedChannel {
 
 impl ChannelId {
     /// Hash the given seed to produce a new channel ID
-    fn hash(seed: &[u8 ; 32]) -> Self {
+    fn hash(seed: &[u8; 32]) -> Self {
         let mut hash = Sha256::new();
         hash.update(&seed);
-        
+
         Self(hash.finalize())
     }
 }
-
 
 /// Format:
 /// ID - [ChannelId]
@@ -109,7 +104,8 @@ impl ToBytes for UnkeyedChannel {
     }
 
     fn size_hint(&self) -> Option<usize> {
-        self.id.size_hint()
+        self.id
+            .size_hint()
             .and_then(|sz| self.seed.size_hint().map(|s| s + sz))
             .and_then(|sz| self.keysalt.size_hint().map(|s| s + sz))
             .and_then(|sz| self.name.size_hint().map(|s| s + sz))
@@ -119,8 +115,8 @@ impl ToBytes for UnkeyedChannel {
 impl FromBytes for UnkeyedChannel {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, crate::FromBytesError> {
         let id = ChannelId::parse(reader)?;
-        let seed = <[u8 ; 32]>::parse(reader)?;
-        let keysalt = <[u8 ; 16]>::parse(reader)?;
+        let seed = <[u8; 32]>::parse(reader)?;
+        let keysalt = <[u8; 16]>::parse(reader)?;
         let name = String::parse(reader)?;
 
         Ok(Self {
@@ -147,7 +143,10 @@ impl ToBytes for ChannelId {
 impl FromBytes for ChannelId {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, crate::FromBytesError> {
         let id = u64::parse(reader)?;
-        Ok(Self(*GenericArray::<u8, <Sha256 as OutputSizeUser>::OutputSize>::from_slice(&id.to_le_bytes())))
+        Ok(Self(*GenericArray::<
+            u8,
+            <Sha256 as OutputSizeUser>::OutputSize,
+        >::from_slice(&id.to_le_bytes())))
     }
 }
 
