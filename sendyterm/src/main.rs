@@ -79,7 +79,7 @@ async fn main() {
                 }
             };
             
-            let ctx = Context::new(keychain, std::net::IpAddr::V4(publicip)).await;
+            let ctx = Context::new(keychain, std::net::IpAddr::V4(publicip), "USER".to_owned()).await;
             let _peer = ctx.connect(std::net::SocketAddr::V4(peer)).await.unwrap();
             println!("Valid peer connected");
 

@@ -9,7 +9,7 @@ use crate::{FromBytes, model::{message::ChatMessageId, crypto::SHA256_HASH_LEN_B
 
 /// A container for all messages that are being stored locally, ready to be sent to peers that
 /// request them / frontend
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct MessageDatabase {
     /// For now, database is a naive directory full of timestamped files
     dir: PathBuf,
@@ -72,7 +72,7 @@ impl MessageDatabase {
     }
     
     /// Lookup all chat messages sent by any peer in the given timespan
-    pub fn get_in_range(&self, span: Range<DateTime<Utc>>) -> impl Iterator<Item = ChatMessageId> {
+    pub fn get_in_range(&self, _: Range<DateTime<Utc>>) -> impl Iterator<Item = ChatMessageId> {
         std::iter::empty()
     }
 }

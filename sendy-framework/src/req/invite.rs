@@ -2,7 +2,7 @@ use bytes::BufMut;
 
 use crate::{net::msg::MessageKind, ctx::Context, Peer, model::channel::UnkeyedChannel, ToBytes, FromBytes, FromBytesError};
 
-use super::{Request, StatefulToBytes, Encrypted, Signed, StatefulFromBytes, Response};
+use super::{Request, StatefulToBytes, Encrypted, Signed, StatefulFromBytes, Response, SerializationState};
 
 
 /// Request sent to invite a remote peer to a channel
@@ -26,14 +26,14 @@ impl Request for ChannelInviteRequest {
     const KIND: MessageKind = MessageKind::InviteToChannel;
 }
 impl StatefulToBytes for ChannelInviteRequest {
-    fn stateful_write<W: bytes::BufMut>(&self, ctx: &Context, peer: &Peer, buf: W) {
-        self.channel.stateful_write(ctx, peer, buf)
+    fn stateful_write<W: bytes::BufMut>(&self, state: SerializationState<'_>, buf: W) {
+        self.channel.stateful_write(state, buf)
     }
 }
 
 impl StatefulFromBytes for ChannelInviteRequest {
-    fn stateful_parse(ctx: &Context, peer: &Peer, buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        Signed::<Encrypted::<UnkeyedChannel>>::stateful_parse(ctx, peer, buf).map(|channel| Self { channel })
+    fn stateful_parse(state: SerializationState<'_>, buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        Signed::<Encrypted::<UnkeyedChannel>>::stateful_parse(state, buf).map(|channel| Self { channel })
     }
 }
 

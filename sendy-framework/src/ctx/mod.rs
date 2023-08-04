@@ -2,7 +2,9 @@ use std::net::{IpAddr, SocketAddr};
 
 use dashmap::DashMap;
 
-use crate::{net::{sock::{ReliableSocket, PacketKind}, msg::{MessageKind, ReceivedMessage}}, model::{crypto::{PrivateKeychain, SignedCertificate}, channel::{ChannelId, KeyedChannel}}, peer::Peer, req::{ConnectAuthenticate, Request, ChannelInviteRequest, StatefulFromBytes, ChannelInviteResponse}, ser::{FromBytes, FromBytesError}, ToBytes};
+use crate::{net::{sock::{ReliableSocket, PacketKind}, msg::{MessageKind, ReceivedMessage}}, model::{crypto::{PrivateKeychain, SignedCertificate}, channel::{ChannelId, KeyedChannel}}, peer::Peer, req::{ConnectAuthenticate, Request, ChannelInviteRequest, StatefulFromBytes, ChannelInviteResponse, SerializationState}, ser::{FromBytes, FromBytesError}, ToBytes};
+
+use self::msgdb::MessageDatabase;
 
 mod msgdb;
 
@@ -27,6 +29,8 @@ pub struct Context {
 pub(crate) struct ContextState {
     /// Message channels that we have been invited to and generated the keys for
     pub channels: DashMap<ChannelId, KeyedChannel>,
+    /// A collection of all currently-stored messages
+    pub messages: MessageDatabase,
 }
 
 /// Events that may be sent to the frontend via a channel
@@ -122,7 +126,7 @@ impl Context {
             MessageKind::Test => (),
             MessageKind::InviteToChannel => {
                 let peer = self.authenticated_peers.get(&req.from.ip()).ok_or(HandleRequestError::NoPeer)?;
-                let ChannelInviteRequest { channel } = ChannelInviteRequest::stateful_read_from_slice(&self, &peer, &req.bytes)?;
+                let ChannelInviteRequest { channel } = ChannelInviteRequest::stateful_read_from_slice(SerializationState { ctx: self, peer: &peer, channel: None }, &req.bytes)?;
                 let chid = channel.id;
                 let keyed = channel
                     .into_inner()
@@ -182,6 +186,7 @@ impl Default for ContextState {
     fn default() -> Self {
         Self {
             channels: DashMap::new(),
+            messages: MessageDatabase::new("./sendydb".into()),
         }
     }
 }
