@@ -3,4 +3,4 @@
 
 pub mod channel;
 pub mod crypto;
-pub mod message;
+pub mod post;

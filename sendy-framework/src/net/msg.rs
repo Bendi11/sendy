@@ -23,6 +23,8 @@ pub enum MessageKind {
     AuthConnect = PacketKind::MSG_TAG_OFFSET + 3,
     /// Invite a remote to connect to a channel with encryption seed
     InviteToChannel = PacketKind::MSG_TAG_OFFSET + 4,
+    /// Publish a new message to a channel
+    PublishPost = PacketKind::MSG_TAG_OFFSET + 5,
 }
 
 /// A message that has been received from a remote peer, but has not yet been parsed to a message
@@ -49,6 +51,7 @@ impl TryFrom<u8> for MessageKind {
             Some(2) => Self::Terminate,
             Some(3) => Self::AuthConnect,
             Some(4) => Self::InviteToChannel,
+            Some(5) => Self::PublishPost,
             _ => {
                 return Err(FromBytesError::Parsing(format!(
                     "Invalid message kind {:X}",

@@ -1,12 +1,10 @@
 use std::{ops::Range, path::PathBuf};
 
 use base64::{engine::GeneralPurposeConfig, Engine};
-use bytes::Bytes;
 use chrono::{DateTime, Utc};
 
 use crate::{
-    model::{crypto::SHA256_HASH_LEN_BYTES, message::ChatMessageId},
-    FromBytes, FromBytesError, ToBytes,
+    model::{crypto::SHA256_HASH_LEN_BYTES, post::ChatMessageId}, FromBytesError, ToBytes,
 };
 
 /// A container for all messages that are being stored locally, ready to be sent to peers that

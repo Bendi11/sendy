@@ -14,7 +14,6 @@ use crate::{
     peer::Peer,
     req::{
         ChannelInviteRequest, ChannelInviteResponse, ConnectAuthenticate, Request,
-        SerializationState, StatefulFromBytes,
     },
     ser::{FromBytes, FromBytesError},
     ToBytes,
@@ -158,26 +157,20 @@ impl Context {
                     .get(&req.from.ip())
                     .ok_or(HandleRequestError::NoPeer)?;
                 let ChannelInviteRequest { channel } =
-                    ChannelInviteRequest::stateful_read_from_slice(
-                        SerializationState {
-                            ctx: self,
-                            peer: &peer,
-                            channel: None,
-                        },
-                        &req.bytes,
-                    )?;
+                    ChannelInviteRequest::read_from_slice(&req.bytes)?;
                 let chid = channel.id;
                 let keyed = channel
-                    .into_inner()
-                    .into_inner()
                     .gen_key()
                     .map_err(|e| HandleRequestError::KDF { chid, e })?;
 
                 self.state.channels.insert(chid, keyed);
 
-                peer.respond(&self, req, ChannelInviteResponse::ChannelJoined)
+                peer.respond(&self, req, &ChannelInviteResponse::ChannelJoined)
                     .await?;
-            }
+            },
+            MessageKind::PublishPost => {
+                
+            },
             MessageKind::Terminate => {
                 log::trace!("Connection terminated with {}", req.from);
             }

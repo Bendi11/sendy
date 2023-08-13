@@ -10,8 +10,7 @@ use crate::{
         msg::{MessageKind, ReceivedMessage},
         sock::{PacketKind, ReliableSocketConnection},
     },
-    req::{Request, Response, SerializationState, StatefulToBytes},
-    ser::ToBytes,
+    req::{Request, Response},
 };
 
 /// A connection to a remote peer over UDP, with state retrieved from a connection handshake
@@ -21,13 +20,6 @@ pub struct Peer {
     /// The certificate of this peer, including public keys that can be used to encrypt and
     /// validate messages the peer sends
     pub(crate) cert: SignedCertificate,
-}
-
-/// Structure implementing [ToBytes] that allows stateful conversions to bytes using the
-/// [Context]'s cryptography keys
-struct ToBytesContext<'a, 'b, T: StatefulToBytes> {
-    state: SerializationState<'a>,
-    val: &'b T,
 }
 
 impl Peer {
@@ -72,14 +64,7 @@ impl Peer {
             .send_wait_response(
                 &self.conn,
                 R::KIND,
-                ToBytesContext {
-                    state: SerializationState {
-                        ctx,
-                        peer: self,
-                        channel: None,
-                    },
-                    val: msg,
-                },
+                msg,
             )
             .await
     }
@@ -90,21 +75,14 @@ impl Peer {
         &self,
         ctx: &Context,
         req: &ReceivedMessage,
-        response: R,
+        response: &R,
     ) -> std::io::Result<()> {
         ctx.socks
             .send_with_id(
                 &self.conn,
                 req.id,
                 PacketKind::Message(MessageKind::Respond),
-                ToBytesContext {
-                    state: SerializationState {
-                        ctx,
-                        peer: self,
-                        channel: None,
-                    },
-                    val: &response,
-                },
+                response,
             )
             .await
     }
@@ -112,30 +90,13 @@ impl Peer {
     /// Send the given message to the connected peer, returns an `Error` if writing to the socket
     /// fails
     #[inline]
-    pub async fn send<R: Request>(&self, ctx: &Context, msg: R) -> std::io::Result<()> {
+    pub async fn send<R: Request>(&self, ctx: &Context, msg: &R) -> std::io::Result<()> {
         ctx.socks
             .send(
                 &self.conn,
                 PacketKind::Message(R::KIND),
-                ToBytesContext {
-                    state: SerializationState {
-                        ctx,
-                        peer: self,
-                        channel: None,
-                    },
-                    val: &msg,
-                },
+                msg,
             )
             .await
-    }
-}
-
-impl<'a, 'b, T: StatefulToBytes> ToBytes for ToBytesContext<'a, 'b, T> {
-    fn write<W: bytes::BufMut>(&self, buf: W) {
-        self.val.stateful_write(self.state, buf)
-    }
-
-    fn size_hint(&self) -> Option<usize> {
-        self.val.stateful_size_hint(self.state)
     }
 }

@@ -37,6 +37,12 @@ pub trait FromBytes: Sized {
     }
 }
 
+impl<T: ToBytes> ToBytes for &T {
+    fn write<W: BufMut>(&self, buf: W) {
+        (*self).write(buf)
+    }
+}
+
 type VecToBytesLenType = u32;
 
 impl<T: ToBytes> ToBytes for Vec<T> {
