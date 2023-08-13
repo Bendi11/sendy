@@ -1,11 +1,12 @@
-use std::net::{IpAddr, SocketAddr};
+use std::{net::{IpAddr, SocketAddr}, sync::Arc};
 
 use dashmap::DashMap;
+use rsa::pkcs1v15::Signature;
 
 use crate::{
     model::{
         channel::{ChannelId, KeyedChannel},
-        crypto::{PrivateKeychain, SignedCertificate},
+        crypto::{PrivateKeychain, SignedCertificate, UserId}, post::UnsignedPost,
     },
     net::{
         msg::{MessageKind, ReceivedMessage},
@@ -13,7 +14,7 @@ use crate::{
     },
     peer::Peer,
     req::{
-        ChannelInviteRequest, ChannelInviteResponse, ConnectAuthenticate, Request,
+        ChannelInviteRequest, ChannelInviteResponse, ConnectAuthenticate, Request, post::PublishPostRequest,
     },
     ser::{FromBytes, FromBytesError},
     ToBytes,
@@ -29,7 +30,9 @@ pub struct Context {
     /// Manager for all peer connections
     pub(crate) socks: ReliableSocket,
     /// A collection of all peers that have been successfully authenticated
-    pub(crate) authenticated_peers: DashMap<IpAddr, Peer>,
+    pub(crate) authenticated_peers: DashMap<IpAddr, Arc<Peer>>,
+    /// A mapping of all authenticated user IDs to their credentials
+    pub(crate) known_peers: DashMap<UserId, Arc<Peer>>,
     /// All persistent state for the context
     pub(crate) state: ContextState,
     /// Self-signed certificate stating that the public IP of this node owns the public
@@ -64,6 +67,7 @@ impl Context {
         Self {
             socks,
             authenticated_peers: DashMap::new(),
+            known_peers: DashMap::new(),
             state: ContextState::default(),
             certificate,
             keychain,
@@ -102,13 +106,17 @@ impl Context {
 
             return Err(PeerConnectError::InvalidCertificateSignature);
         }
-
-        self.authenticated_peers.insert(
-            peer.ip(),
+        
+        let peer = Arc::new(
             Peer {
                 conn,
                 cert: response.cert,
-            },
+            }
+        );
+
+        self.authenticated_peers.insert(
+            *peer.certificate().cert().owner(),
+            peer,
         );
 
         Ok(())
@@ -140,12 +148,16 @@ impl Context {
                             )
                             .await?;
 
-                        self.authenticated_peers.insert(
-                            req.from.ip(),
+                        let peer = Arc::new(
                             Peer {
                                 conn,
                                 cert: msg.cert,
-                            },
+                            }
+                        );
+
+                        self.authenticated_peers.insert(
+                            *peer.certificate().cert().owner(),
+                            peer,
                         );
                     }
                 }
@@ -169,7 +181,15 @@ impl Context {
                     .await?;
             },
             MessageKind::PublishPost => {
-                
+                let peer = self
+                    .authenticated_peers
+                    .get(&req.from.ip())
+                    .ok_or(HandleRequestError::NoPeer)?;
+            
+                let mut reader = untrusted::Reader::new(untrusted::Input::from(&req.bytes));
+                let (bytes, post) = reader.read_partial(UnsignedPost::parse)?;
+                let bytes = bytes.as_slice_less_safe();
+                let signature = Signature::parse(&mut reader)?;
             },
             MessageKind::Terminate => {
                 log::trace!("Connection terminated with {}", req.from);

@@ -20,42 +20,36 @@ pub struct PostMetadata {
     pub timestamp: DateTime<Utc>,
 }
 
-/// A signed post as it is sent to peers, with unencrypted metadata attached
+/// An unsigned post as it is sent to peers, with unencrypted metadata attached
 #[derive(Debug)]
-pub struct PublishedPost {
+pub struct UnsignedPost {
     /// Unencrypted metadata of the post
     pub meta: PostMetadata,
     /// Encrypted bytes of the message body
     pub body: Vec<u8>,
-    /// Signature of the metadata and encrypted body
-    pub sig: Signature,
 }
 
 
-impl ToBytes for PublishedPost {
+impl ToBytes for UnsignedPost {
     fn write<W: bytes::BufMut>(&self, mut buf: W) {
         self.meta.write(&mut buf);
         self.body.write(&mut buf);
-        self.sig.write(&mut buf);
     }
 
     fn size_hint(&self) -> Option<usize> {
         self.meta.size_hint()
             .zip(self.body.size_hint())
-            .zip(self.sig.size_hint())
-            .map(|((s1, s2), s3)| s1 + s2 + s3)
+            .map(|(s1, s2)| s1 + s2)
     }
 }
 
-impl FromBytes for PublishedPost {
+impl FromBytes for UnsignedPost {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let meta = PostMetadata::parse(reader)?;
         let body = Vec::<u8>::parse(reader)?;
-        let sig = Signature::parse(reader)?;
         Ok(Self {
             meta,
             body,
-            sig,
         })
     } 
 }

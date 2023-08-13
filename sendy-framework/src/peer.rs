@@ -2,10 +2,12 @@ use std::net::SocketAddr;
 
 use bytes::Bytes;
 use futures::Future;
+use sha2::{Sha256, Digest};
+use rsa::pkcs8::EncodePublicKey;
 
 use crate::{
     ctx::Context,
-    model::crypto::{PublicKeychain, SignedCertificate},
+    model::crypto::{PublicKeychain, SignedCertificate, UserId},
     net::{
         msg::{MessageKind, ReceivedMessage},
         sock::{PacketKind, ReliableSocketConnection},
@@ -32,6 +34,16 @@ impl Peer {
     #[inline(always)]
     pub const fn remote_keys(&self) -> &PublicKeychain {
         self.certificate().cert().keychain()
+    }
+    
+    /// Compute the user ID of this peer by the hash of their public key
+    pub fn id(&self) -> Result<UserId, rsa::pkcs8::spki::Error> {
+        let mut hasher = Sha256::new();
+        let bytes = self.remote_keys().auth.to_public_key_der()?;
+        hasher.update(bytes.as_bytes());
+        let hash = hasher.finalize();
+
+        Ok(UserId(hash.into()))
     }
 }
 

@@ -49,8 +49,8 @@ pub const SHA256_HASH_LEN_BYTES: usize = 32;
 
 /// A 32-byte user ID that is a hash of the user's public authentication key, used to shorten
 /// message lengths
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub struct UserId([u8; SHA256_HASH_LEN_BYTES]);
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UserId(pub [u8; SHA256_HASH_LEN_BYTES]);
 
 /// A certificate claiming ownership over a set of public keys that has not yet been signed by a
 /// private key

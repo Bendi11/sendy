@@ -11,9 +11,11 @@ use sha2::Sha256;
 
 use crate::{FromBytes, ToBytes};
 
+use super::crypto::SHA256_HASH_LEN_BYTES;
+
 /// A channel identifier created by hashing the [Channel]'s seed
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct ChannelId(GenericArray<u8, <Sha256 as OutputSizeUser>::OutputSize>);
+pub struct ChannelId(pub [u8 ; SHA256_HASH_LEN_BYTES]);
 
 /// A key derived from a channel's random seed used to encrypt channel messages
 pub type ChannelKey = GenericArray<u8, <ChaCha20Poly1305 as KeySizeUser>::KeySize>;
@@ -86,7 +88,7 @@ impl ChannelId {
         let mut hash = Sha256::new();
         hash.update(&seed);
 
-        Self(hash.finalize())
+        Self(hash.finalize().into())
     }
 }
 
@@ -132,7 +134,7 @@ impl FromBytes for UnkeyedChannel {
 /// ID - 8 bytes - little endian
 impl ToBytes for ChannelId {
     fn write<W: BufMut>(&self, mut buf: W) {
-        buf.put_slice(&self.0)
+        self.0.write(buf)
     }
 
     fn size_hint(&self) -> Option<usize> {
@@ -142,16 +144,13 @@ impl ToBytes for ChannelId {
 
 impl FromBytes for ChannelId {
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, crate::FromBytesError> {
-        let id = u64::parse(reader)?;
-        Ok(Self(*GenericArray::<
-            u8,
-            <Sha256 as OutputSizeUser>::OutputSize,
-        >::from_slice(&id.to_le_bytes())))
+        let id = <[u8 ; 32]>::parse(reader)?;
+        Ok(Self(id))
     }
 }
 
 impl fmt::Display for ChannelId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:x}", self.0)
+        write!(f, "{:x?}", &self.0)
     }
 }

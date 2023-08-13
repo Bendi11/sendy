@@ -30,10 +30,18 @@ pub trait FromBytes: Sized {
     /// instance of `Self`
     fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError>;
 
-    /// Helper function to read an instance of [self] without needing to create [untrusted] types
+    /// Helper function to read an instance of `Self` without needing to create [untrusted] types
     fn read_from_slice(slice: &[u8]) -> Result<Self, FromBytesError> {
         let mut reader = untrusted::Reader::new(untrusted::Input::from(slice));
         Self::parse(&mut reader)
+    }
+    
+    /// Parse an instance of `Self` and return a tuple of the bytes that were parsed and the
+    /// instance
+    fn partial_read_from_slice(slice: &[u8]) -> Result<(&[u8], Self), FromBytesError> {
+        let mut reader = untrusted::Reader::new(untrusted::Input::from(slice));
+        let (read, this) = reader.read_partial(Self::parse)?;
+        Ok((read.as_slice_less_safe(), this))
     }
 }
 

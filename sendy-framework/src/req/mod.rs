@@ -25,24 +25,3 @@ pub trait Request: ToBytes + FromBytes {
 }
 
 pub trait Response: ToBytes + FromBytes {}
-
-
-/// Wrapper for a type that is signed with the private key before being sent to a remote, and
-/// verified with a remote's public key when receieved
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Signed<T> {
-    pub val: T,
-    pub signature: Signature,
-    pub valid: bool,
-}
-impl<T> Signed<T> {
-    pub fn into_inner(self) -> T {
-        self.val
-    }
-}
-impl<T> Deref for Signed<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        &self.val
-    }
-}
