@@ -24,6 +24,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum CliCommand {
     #[command(about = "Generate new RSA private keys and overwrite them in your secret storage")]
+    #[command(name = "keygen")]
     KeyGen {
         #[arg(short = 's', long = "size")]
         #[arg(value_enum)]
@@ -31,21 +32,29 @@ pub enum CliCommand {
         bits: RsaKeyWidth,
     },
     #[command(
-        about = "Connect to the remote peer at the given address using keys stored in the secret storage"
+        about = "",
+        name = ""
     )]
-    Connect {
+    Run {
+        #[arg(
+            index = 2,
+            name = "Username",
+            help = "Username to display to other users"
+        )]
+        username: String,
         #[arg(
             index = 1,
-            name = "Username",
-            help = "IP address and port of the remote peer"
-        )]
-        peer: SocketAddrV4,
-        #[arg(
             short = 'p',
             long = "hostip",
             help = "Public IP address of the local host"
         )]
         publicip: Ipv4Addr,
+        #[arg(
+            short = 'p',
+            long = "ports",
+            help = "A comma-separated list of ports to listen for connections on"
+        )]
+        ports: Vec<u16>,
     },
 }
 
@@ -86,7 +95,7 @@ async fn main() {
 
     let args = Cli::parse();
 
-    let secretstore = match args.keystore {
+    let keystore = match args.keystore {
         KeyStore::PlainFile => &secret::DerFileStore as &dyn secret::SecretStore,
         #[cfg(target_os="linux")]
         KeyStore::SecretService => &secret::SecretServiceStore as &dyn secret::SecretStore,
@@ -98,12 +107,12 @@ async fn main() {
             let signature = rsa::RsaPrivateKey::new(&mut rng, bits as usize).unwrap();
             let encrypt = rsa::RsaPrivateKey::new(&mut rng, bits as usize).unwrap();
 
-            secretstore
+            keystore
                 .store(&PrivateKeychain::new(signature, encrypt))
                 .await;
         }
-        CliCommand::Connect { peer, publicip } => {
-            let keychain = match secretstore.read().await {
+        CliCommand::Run { username, publicip, ports } => {
+            let keychain = match keystore.read().await {
                 Some(kc) => kc,
                 None => {
                     log::error!(
@@ -119,10 +128,16 @@ async fn main() {
 
             let ctx =
                 Context::new(keychain, std::net::IpAddr::V4(publicip), "USER".to_owned()).await;
-            let _peer = ctx.connect(std::net::SocketAddr::V4(peer)).await.unwrap();
-            println!("Valid peer connected");
 
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            for port in ports {
+                if let Err(e) = ctx.listen(port).await {
+                    log::error!("Failed to listen on port {port}: {}", e);
+                }
+            }
+
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
         }
     }
 }

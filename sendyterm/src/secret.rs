@@ -17,6 +17,8 @@ pub use secserv::SecretServiceStore;
 pub use filestore::DerFileStore;
 
 mod filestore {
+    use std::path::Path;
+
     use sendy_framework::rsa::{
         pkcs8::{DecodePrivateKey, EncodePrivateKey},
         RsaPrivateKey
@@ -32,7 +34,7 @@ mod filestore {
     #[async_trait]
     impl SecretStore for DerFileStore {
         async fn store(&self, keys: &PrivateKeychain) {
-            if let Err(e) = std::fs::create_dir_all(Self::AUTHKEY_PATH) {
+            if let Err(e) = std::fs::create_dir_all(Self::KEY_DIR) {
                 log::warn!("Failed to create private keys folder: {}", e);
             }
 
@@ -72,6 +74,7 @@ mod filestore {
     }
 
     impl DerFileStore {
+        const KEY_DIR: &str = "./.key/";
         const AUTHKEY_PATH: &str = "./.key/sendy-authkey.der";
         const ENCKEY_PATH: &str = "./.key/sendy-enckey.der";
     }
