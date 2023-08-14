@@ -4,7 +4,7 @@ use bytes::BufMut;
 use rsa::{pkcs1v15::Signature, rand_core::OsRng, Pkcs1v15Encrypt};
 
 use crate::{
-    ctx::Context,
+    ctx::ContextInternal,
     model::channel::KeyedChannel,
     net::msg::MessageKind,
     ser::{FromBytes, FromBytesError, ToBytes},

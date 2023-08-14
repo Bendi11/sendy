@@ -6,7 +6,7 @@ use sha2::{Sha256, Digest};
 use rsa::pkcs8::EncodePublicKey;
 
 use crate::{
-    ctx::Context,
+    ctx::ContextInternal,
     model::crypto::{PublicKeychain, SignedCertificate, UserId},
     net::{
         msg::{MessageKind, ReceivedMessage},
@@ -49,7 +49,7 @@ impl Peer {
 
 impl Peer {
     /// Disconnect from this peer
-    pub async fn disconnect(self, ctx: &Context) -> std::io::Result<()> {
+    pub(crate) async fn disconnect(self, ctx: &ContextInternal) -> std::io::Result<()> {
         let _ = ctx
             .socks
             .send_wait_response(&self.conn, MessageKind::Terminate, ())
@@ -64,12 +64,17 @@ impl Peer {
     pub const fn remote(&self) -> &SocketAddr {
         self.conn.remote()
     }
+    
+    /// Get the signed certificate of the peer
+    pub const fn cert(&self) -> &SignedCertificate {
+        &self.cert
+    }
 
     /// Send the given request message and await a response from the remote
     #[inline]
-    pub async fn send_wait_response<'a, R: Request>(
+    pub(crate) async fn send_wait_response<'a, R: Request>(
         &'a self,
-        ctx: &'a Context,
+        ctx: &'a ContextInternal,
         msg: &'a R,
     ) -> std::io::Result<impl Future<Output = Bytes> + 'a> {
         ctx.socks
@@ -83,9 +88,9 @@ impl Peer {
 
     /// Respond to the given request message with a payload only, no message kind needed
     #[inline]
-    pub async fn respond<R: Response>(
+    pub(crate) async fn respond<R: Response>(
         &self,
-        ctx: &Context,
+        ctx: &ContextInternal,
         req: &ReceivedMessage,
         response: &R,
     ) -> std::io::Result<()> {
@@ -102,7 +107,7 @@ impl Peer {
     /// Send the given message to the connected peer, returns an `Error` if writing to the socket
     /// fails
     #[inline]
-    pub async fn send<R: Request>(&self, ctx: &Context, msg: &R) -> std::io::Result<()> {
+    pub(crate) async fn send<R: Request>(&self, ctx: &ContextInternal, msg: &R) -> std::io::Result<()> {
         ctx.socks
             .send(
                 &self.conn,

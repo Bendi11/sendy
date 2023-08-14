@@ -6,7 +6,7 @@ use std::{
 
 use clap::{Parser, Subcommand};
 
-use sendy_framework::{ctx::Context, model::crypto::PrivateKeychain, rsa};
+use sendy_framework::{ctx::ContextInternal, model::crypto::PrivateKeychain, rsa};
 
 #[derive(Parser)]
 #[command(name = "sendy")]
@@ -97,7 +97,7 @@ async fn main() {
             };
 
             let ctx =
-                Context::new(keychain, std::net::IpAddr::V4(publicip), "USER".to_owned()).await;
+                ContextInternal::new(keychain, std::net::IpAddr::V4(publicip), "USER".to_owned()).await;
             let _peer = ctx.connect(std::net::SocketAddr::V4(peer)).await.unwrap();
             println!("Valid peer connected");
 

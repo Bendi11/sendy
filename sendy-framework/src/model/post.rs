@@ -29,6 +29,15 @@ pub struct UnsignedPost {
     pub body: Vec<u8>,
 }
 
+/// An unsigned post as it is sent to peers, with unencrypted metadata attached
+#[derive(Debug)]
+pub struct SignedPost {
+    /// The bytes whose encoded representation is signed in the [sig] field
+    pub post: UnsignedPost,
+    /// Signature of the post
+    pub sig: Signature,
+}
+
 
 impl ToBytes for UnsignedPost {
     fn write<W: bytes::BufMut>(&self, mut buf: W) {
