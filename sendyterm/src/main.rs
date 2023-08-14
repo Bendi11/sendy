@@ -33,7 +33,7 @@ pub enum CliCommand {
     },
     #[command(
         about = "",
-        name = ""
+        name = "launch"
     )]
     Run {
         #[arg(
