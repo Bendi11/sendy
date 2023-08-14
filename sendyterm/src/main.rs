@@ -6,12 +6,17 @@ use std::{
 
 use clap::{Parser, Subcommand};
 
-use sendy_framework::{ctx::ContextInternal, model::crypto::PrivateKeychain, rsa};
+use sendy_framework::{ctx::Context, model::crypto::PrivateKeychain, rsa};
 
 #[derive(Parser)]
 #[command(name = "sendy")]
 #[command(about = "Terminal interface for the Sendy p2p chat")]
 pub struct Cli {
+    #[arg(short = 'k', long = "keystore")]
+    #[arg(value_enum)]
+    #[arg(default_value_t=KeyStore::PlainFile)]
+    #[arg(help = "Method used to store private keys")]
+    keystore: KeyStore,
     #[command(subcommand)]
     command: CliCommand,
 }
@@ -31,7 +36,7 @@ pub enum CliCommand {
     Connect {
         #[arg(
             index = 1,
-            name = "PEER",
+            name = "Username",
             help = "IP address and port of the remote peer"
         )]
         peer: SocketAddrV4,
@@ -49,6 +54,16 @@ pub enum CliCommand {
 pub enum RsaKeyWidth {
     Large = 4096,
     Small = 2048,
+}
+
+/// Selection for how the private keychain is persisted between sessions
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum KeyStore {
+    /// Store the private keychain as secrets using the secret service API
+    #[cfg(target_os = "linux")]
+    SecretService,
+    /// Store the private keychain as unprotected PKCS#8 DER files
+    PlainFile,
 }
 
 /// Test UDP connection on local network
@@ -71,18 +86,24 @@ async fn main() {
 
     let args = Cli::parse();
 
+    let secretstore = match args.keystore {
+        KeyStore::PlainFile => &secret::DerFileStore as &dyn secret::SecretStore,
+        #[cfg(target_os="linux")]
+        KeyStore::SecretService => &secret::SecretServiceStore as &dyn secret::SecretStore,
+    };
+
     match args.command {
         CliCommand::KeyGen { bits } => {
             let mut rng = rsa::rand_core::OsRng::default();
             let signature = rsa::RsaPrivateKey::new(&mut rng, bits as usize).unwrap();
             let encrypt = rsa::RsaPrivateKey::new(&mut rng, bits as usize).unwrap();
 
-            secret::SECRET_STORE
+            secretstore
                 .store(&PrivateKeychain::new(signature, encrypt))
                 .await;
         }
         CliCommand::Connect { peer, publicip } => {
-            let keychain = match secret::SECRET_STORE.read().await {
+            let keychain = match secretstore.read().await {
                 Some(kc) => kc,
                 None => {
                     log::error!(
@@ -97,7 +118,7 @@ async fn main() {
             };
 
             let ctx =
-                ContextInternal::new(keychain, std::net::IpAddr::V4(publicip), "USER".to_owned()).await;
+                Context::new(keychain, std::net::IpAddr::V4(publicip), "USER".to_owned()).await;
             let _peer = ctx.connect(std::net::SocketAddr::V4(peer)).await.unwrap();
             println!("Valid peer connected");
 

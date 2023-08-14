@@ -12,7 +12,70 @@ pub trait SecretStore {
 }
 
 #[cfg(target_os = "linux")]
-pub const SECRET_STORE: &dyn SecretStore = &secserv::SecretServiceStore;
+pub use secserv::SecretServiceStore;
+
+pub use filestore::DerFileStore;
+
+mod filestore {
+    use sendy_framework::rsa::{
+        pkcs8::{DecodePrivateKey, EncodePrivateKey},
+        RsaPrivateKey
+    };
+
+    use super::*;
+    
+    /// Private keychain storage that encodes the keychain as PKCS#8 DER files
+    /// **without** any additional protection
+    #[derive(Clone, Copy, Debug)]
+    pub struct DerFileStore;
+
+    #[async_trait]
+    impl SecretStore for DerFileStore {
+        async fn store(&self, keys: &PrivateKeychain) {
+            if let Err(e) = std::fs::create_dir_all(Self::AUTHKEY_PATH) {
+                log::warn!("Failed to create private keys folder: {}", e);
+            }
+
+            match keys.auth.to_pkcs8_der()
+                .and_then(|auth| keys.enc.to_pkcs8_der().map(|enc| (auth, enc))) {
+                    Ok((auth, enc)) => if let Err(e) = std::fs::write(Self::AUTHKEY_PATH, auth.as_bytes())
+                        .and_then(|_| std::fs::write(Self::ENCKEY_PATH, enc.as_bytes())) {
+                            log::error!("Failed to write keys to file {}", e);
+                        },
+                    Err(e) => {
+                        log::error!("Failed to encode private keychain as DER: {}", e);
+                    }
+                }
+        }
+
+        async fn read(&self) -> Option<PrivateKeychain> {
+            match std::fs::read(Self::AUTHKEY_PATH)
+                .and_then(|auth| std::fs::read(Self::ENCKEY_PATH)
+                    .map(|enc| (auth, enc))
+                ) {
+                Ok((auth, enc)) => match RsaPrivateKey::from_pkcs8_der(&auth)
+                        .and_then(|auth| RsaPrivateKey::from_pkcs8_der(&enc)
+                            .map(|enc| (auth, enc))
+                        ) {
+                            Ok((auth, enc)) => Some(PrivateKeychain::new(auth, enc)),
+                            Err(e) => {
+                                log::error!("Failed to decode private key from PKCS#8 DER: {}", e);
+                                None
+                            }
+                        },
+                Err(e) => {
+                    log::error!("Failed to open keys from files: {}", e);
+                    None
+                }
+            }
+        }
+    }
+
+    impl DerFileStore {
+        const AUTHKEY_PATH: &str = "./.key/sendy-authkey.der";
+        const ENCKEY_PATH: &str = "./.key/sendy-enckey.der";
+    }
+}
 
 #[cfg(target_os = "linux")]
 mod secserv {
@@ -22,7 +85,9 @@ mod secserv {
     use futures::TryFutureExt;
     use secret_service::{EncryptionType, SecretService};
     use sendy_framework::{rsa::RsaPrivateKey, FromBytes, ToBytes};
-
+    
+    /// Storage for private keychain that saves authentication and encryption keys as secrets using
+    /// the secret service API
     pub struct SecretServiceStore;
 
     #[async_trait]
