@@ -10,7 +10,6 @@ use std::{
 
 use dashmap::DashMap;
 pub(crate) use packet::PacketKind;
-use parking_lot::Mutex;
 use tokio::{
     net::UdpSocket,
     sync::{mpsc::Receiver, Notify},
@@ -21,8 +20,6 @@ use self::{
     recv::{FinishedMessage, ReliableSocketRecv},
     tx::ReliableSocketCongestionControl,
 };
-
-use super::msg::ReceivedMessage;
 
 /// Configuration options for a socket connection
 #[derive(Debug)]

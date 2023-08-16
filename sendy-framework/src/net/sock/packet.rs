@@ -3,7 +3,6 @@ use std::{fmt, num::NonZeroU8};
 use bytes::BufMut;
 
 use crate::{
-    net::msg::MessageKind,
     ser::{FromBytes, FromBytesError, ToBytes},
 };
 
@@ -49,9 +48,6 @@ pub(crate) struct PacketId {
 /// Unique identifier assigned to each packet, identifies the purpose of the packet
 ///
 /// There are two primary kinds of packets sent:
-/// ## Control:
-///  - Control packets are single packets with payload sizes under the MAX_SAFE_UDP_PAYLOAD
-///  - Used to transfer messages between nodes for metadata like window sizes
 /// ## Message:
 ///  - Message packets signal the beginning of a TRANSFER packet stream
 ///  - Message packets are used for application-level messaging between nodes
@@ -68,9 +64,6 @@ pub enum PacketKind {
     /// Signals that the following payload bytes are to be placed at the offset into the message
     /// given by the [PacketId] of the header
     Transfer = 2,
-
-    /// An application-level message packet
-    Message(MessageKind),
 }
 
 /// Unit struct that implements the [Message] trait with no payload, allowing the lower-level
@@ -88,9 +81,7 @@ impl ToBytes for AckMessage {
 }
 
 impl PacketKind {
-    /// The tag to be used for the message tag with the lowest ID in the
-    /// [MessageKind] enum
-    pub const MSG_TAG_OFFSET: u8 = 3;
+    
 }
 
 impl ToBytes for PacketId {
@@ -148,7 +139,6 @@ impl FromBytes for PacketKind {
             0 => Self::Conn,
             1 => Self::Ack,
             2 => Self::Transfer,
-            other => Self::Message(MessageKind::try_from(other)?),
         })
     }
 }
@@ -159,7 +149,6 @@ impl ToBytes for PacketKind {
             Self::Conn => 0,
             Self::Ack => 1,
             Self::Transfer => 2,
-            Self::Message(msg) => *msg as u8,
         };
         buf.put_u8(v);
     }
