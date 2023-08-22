@@ -37,17 +37,15 @@ A node must advertise in its certificate wether it can provide the following ser
  * Public IP address and port notification for NAT traversal
  * Peer introduction allowing other UDP tunnel connections to be made
 
-In addition, nodes **must** support:
- * Spreading certificates of other users
 
 # Channel
-A channel is a container of [posts](#Post)
+A channel is a container of [post](#Post) [resources](#Resource)
 
 
 # Resource
 Resources are any data that should be persisted and/or known by the network.
 These include
- - [Session Certificates](#Certificate)
+ - [Session Certificates](#Session Certificate)
  - [Posts](#Post)
 
 Resources must be identifiable by a unique ID that is derived from the resource's contents.
@@ -68,25 +66,25 @@ Posts must contain:
 # Messages
 Messages are collections of packets at most ~3MB in size that are passed between nodes in the network.
 
-Messages are introduced by a packet with a message type header, the first bit indicating that the message is a response, and the other 7 indicating
+Messages are introduced by a packet with a 1 byte message type header indicating
 the kind of introduced message.
 Message packets are identified by a 1 byte message ID that rolls over upon reaching 255, and a 2 byte packet ID specifying
 where in the receiever's reassembly buffer the packet's payload should be placed in MTU blocks - 500 bytes.
 eg. a packet ID of 3 indicates that the contents of the packet should be copied to the 1500th byte of the buffer.
 
-## TRANSFER
+## TRANSFER Packet
 A TRANSFER packet is used to indicate that the packet's contents are meant to be placed in a reassembly buffer, and do not introduce a new buffer themselves.
 
-## ACK
+## ACK Packet
 Single packet that acknowledges the successful reception of a single packet.
 The message and packet ID of the packet are set to the message and packet ID of the acknowledged packet.
 If a sender does not receive an ACK packet in a certain time limit, they will retransmit the unacknowledged packet.
 
-## PING
+## PING Packet
 A single packet that must be sent to ensure that a peer is still connected.
 Peers must respond to a PING packet with another response PING packet.
 
-## TUNNEL
+## TUNNEL Packet
 TUNNEL packets are to be acknowledged but otherwise unused.
 Their purpose is to allow basic UDP tunneling through UDP by bidirectional transfer of packets that forces a NAT to make a routing entry.
 To connect via UDP tunneling, two peers must find each other via another node that offers introduction [capabilities](#Capabilities).
@@ -94,10 +92,10 @@ To connect via UDP tunneling, two peers must find each other via another node th
 After agreeing to a connection port, the nodes both send TUNNEL packets with no payload to each other. When one node receives an
 ACK packet for their TUNNEL packet, they will consider the connection established and stop sending TUNNEL packets.
 
-## ADVERTISE
+## ADVERTISE Packet
 ADVERTISE messages are used to notify other nodes of the existence of resources without transferring the resource.
 They contain a list of [resource IDs](#Resource) in self-identifying form (preceded by a resource type tag).
 
-## RESOURCE
+## RESOURCE Packet
 RESOURCE messages are used to transfer a group of resources to another peer.
 They contain a count of resources included, self-describing resource IDs and the encoded resources.
