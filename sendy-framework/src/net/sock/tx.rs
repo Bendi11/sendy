@@ -17,7 +17,7 @@ use tokio::{
 };
 
 use crate::{
-    ser::{FromBytes, ToBytes},
+    ser::{FromBytes, ToBytes, ByteWriter, BytesWriter},
 };
 
 use super::{
@@ -180,7 +180,7 @@ impl ReliableSocket {
 
         let header = PacketHeader { kind, id, checksum };
 
-        header.write((&mut buf).limit(HEADER_SZ));
+        header.write(&mut BytesWriter((&mut buf).limit(HEADER_SZ)));
 
         let sock = self.get_sock(addr.port())?;
         sock.send_to(&buf, addr).await?;
@@ -341,6 +341,7 @@ impl MessageSplitter {
     }
 }
 
+impl ByteWriter for MessageSplitter {}
 unsafe impl BufMut for MessageSplitter {
     fn remaining_mut(&self) -> usize {
         self.buf.remaining_mut()

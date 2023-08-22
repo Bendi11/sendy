@@ -1,14 +1,46 @@
 //! Module defining traits for how rust types get serialized to bytes when transmitted
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::{net::{IpAddr, Ipv4Addr, Ipv6Addr}, borrow::Cow};
 
-use bytes::{Buf, BufMut};
+use bytes::{Buf, BufMut, BytesMut};
 use chrono::{NaiveDateTime, Utc};
+
+pub trait ByteWriter: BufMut + Sized {
+    /// Write the byte representation of the given value to `self`, and return the bytes that were
+    /// written, used to sign the encoded representation of `val`
+    fn write_partial<'a, T: ToBytes>(&'a mut self, val: &T) -> Cow<'a, [u8]> {
+        let buf = val.write_to_vec();
+        self.put_slice(&buf);
+        Cow::Owned(buf)
+    }
+}
+
+impl ByteWriter for Vec<u8> {
+    fn write_partial<'a, T: ToBytes>(&'a mut self, val: &T) -> Cow<'a, [u8]> {
+        let start_idx = self.len();
+        val.write(self);
+        Cow::Borrowed(&self[start_idx..])
+    }
+}
+
+impl<T: ByteWriter> ByteWriter for &mut T {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct BytesWriter<B: BufMut>(pub B);
+
+unsafe impl<B: BufMut> BufMut for BytesWriter<B> {
+    fn remaining_mut(&self) -> usize { self.0.remaining_mut() }
+    unsafe fn advance_mut(&mut self, cnt: usize) { self.0.advance_mut(cnt) }
+    fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice { self.0.chunk_mut() }
+}
+
+impl ByteWriter for BytesMut {}
+impl<B: BufMut> ByteWriter for BytesWriter<B> {}
 
 /// Trait to be implemented by all types that can be written to a byte buffer
 pub trait ToBytes: Sized {
     /// Write the representation of this payload to a buffer of bytes
-    fn write<W: BufMut>(&self, buf: W);
+    fn write<W: ByteWriter>(&self, buf: &mut W);
 
     /// Provide the encoded size in bytes of this value
     fn size_hint(&self) -> Option<usize> {
@@ -46,7 +78,7 @@ pub trait FromBytes: Sized {
 }
 
 impl<T: ToBytes> ToBytes for &T {
-    fn write<W: BufMut>(&self, buf: W) {
+    fn write<W: ByteWriter>(&self, buf: &mut W) {
         (*self).write(buf)
     }
 }
@@ -54,10 +86,10 @@ impl<T: ToBytes> ToBytes for &T {
 type VecToBytesLenType = u32;
 
 impl<T: ToBytes> ToBytes for Vec<T> {
-    fn write<B: BufMut>(&self, mut buf: B) {
+    fn write<B: ByteWriter>(&self, buf: &mut B) {
         buf.put_u32_le(self.len() as VecToBytesLenType);
         for elem in self.iter() {
-            elem.write(&mut buf);
+            elem.write(buf);
         }
     }
 
@@ -87,7 +119,7 @@ impl<T: FromBytes> FromBytes for Vec<T> {
 macro_rules! integral_from_to_bytes {
     ($type:ty: $get_method_name:ident, $put_method_name:ident) => {
         impl ToBytes for $type {
-            fn write<B: BufMut>(&self, mut buf: B) {
+            fn write<B: ByteWriter>(&self, buf: &mut B) {
                 buf.$put_method_name(*self)
             }
 
@@ -116,7 +148,7 @@ integral_from_to_bytes! {i32: get_i32_le, put_i32_le}
 integral_from_to_bytes! {i64: get_i64_le, put_i64_le}
 
 impl ToBytes for () {
-    fn write<W: BufMut>(&self, _buf: W) {}
+    fn write<W: BufMut>(&self, _buf: &mut W) {}
     fn size_hint(&self) -> Option<usize> {
         Some(0)
     }
@@ -146,7 +178,7 @@ const IPVERSION_MARKER_V6: u8 = 6;
 /// ipversion - 1 byte - 4 for ipv4 and 6 for ipv6
 /// addr - 4 or 16 bytes - based on ipversion
 impl ToBytes for IpAddr {
-    fn write<B: BufMut>(&self, mut buf: B) {
+    fn write<B: ByteWriter>(&self, buf: &mut B) {
         match self {
             Self::V4(v4addr) => {
                 buf.put_u8(IPVERSION_MARKER_V4);
@@ -187,7 +219,7 @@ impl FromBytes for IpAddr {
 /// Format of IPv4 address:
 /// addr - 4 bytes - big endian address
 impl ToBytes for Ipv4Addr {
-    fn write<W: BufMut>(&self, mut buf: W) {
+    fn write<W: BufMut>(&self, buf: &mut W) {
         buf.put_slice(&self.octets());
     }
 }
@@ -205,7 +237,7 @@ impl FromBytes for Ipv4Addr {
 /// Format of IPv6 address:
 /// addr - 16 bytes - big endian address
 impl ToBytes for Ipv6Addr {
-    fn write<W: BufMut>(&self, mut buf: W) {
+    fn write<W: ByteWriter>(&self, buf: &mut W) {
         let octets = self.octets();
         buf.put_slice(&octets);
     }
@@ -229,8 +261,8 @@ impl FromBytes for Ipv6Addr {
 /// len - 4 bytes - [u32](std::u32)
 /// bytes - `len` bytes
 impl ToBytes for String {
-    fn write<W: BufMut>(&self, mut buf: W) {
-        (self.as_bytes().len() as u32).write(&mut buf);
+    fn write<W: ByteWriter>(&self, buf: &mut W) {
+        (self.as_bytes().len() as u32).write(buf);
         buf.put_slice(&self.as_bytes())
     }
 
@@ -248,7 +280,7 @@ impl FromBytes for String {
 }
 
 impl<const N: usize> ToBytes for [u8; N] {
-    fn write<W: BufMut>(&self, mut buf: W) {
+    fn write<W: ByteWriter>(&self, buf: &mut W) {
         buf.put_slice(self.as_slice())
     }
 
@@ -271,7 +303,7 @@ impl<const N: usize> FromBytes for [u8; N] {
 /// Format:
 /// UNIX timestamp - 8 bytes
 impl ToBytes for chrono::DateTime<Utc> {
-    fn write<W: BufMut>(&self, buf: W) {
+    fn write<W: ByteWriter>(&self, buf: &mut W) {
         self.timestamp().write(buf)
     }
 

@@ -3,8 +3,10 @@ mod ser;
 mod crypto;
 
 
+use std::sync::Arc;
+
 use crypto::PrivateKeychain;
-use net::sock::ReliableSocket;
+use net::sock::{ReliableSocket, SocketConfig};
 pub use ser::{FromBytes, FromBytesError, ToBytes};
 
 
@@ -16,4 +18,16 @@ pub struct Context {
     socks: ReliableSocket,
     /// Keychain used to sign and encrypt messages
     keychain: PrivateKeychain,
+}
+
+impl Context {
+    /// Create a new `Context` with the given keychain for authentication and encryption
+    pub fn new(keychain: PrivateKeychain, cfg: SocketConfig) -> Arc<Self> {
+        let socks = ReliableSocket::new(cfg);
+        
+        Arc::new(Self {
+            socks,
+            keychain,
+        })
+    }
 }

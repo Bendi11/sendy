@@ -67,7 +67,7 @@ impl ReliableSocketTransmitter {
 
 impl ReliableSocket {
     /// Create a new socket that is not connected to any remote peer
-    pub async fn new(cfg: SocketConfig) -> Self {
+    pub fn new(cfg: SocketConfig) -> Self {
         let recv = ReliableSocketRecv::new(&cfg);
 
         Self {
@@ -102,7 +102,6 @@ impl ReliableSocket {
         })
     }
 }
-
 
 impl Default for SocketConfig {
     fn default() -> Self {

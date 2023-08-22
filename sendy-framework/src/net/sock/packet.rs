@@ -3,7 +3,7 @@ use std::{fmt, num::NonZeroU8};
 use bytes::BufMut;
 
 use crate::{
-    ser::{FromBytes, FromBytesError, ToBytes},
+    ser::{FromBytes, FromBytesError, ToBytes, ByteWriter},
 };
 
 /// 'minimum maximum reassembly buffer size' guaranteed to be deliverable, minus IP and UDP headers
@@ -80,7 +80,7 @@ impl FromBytes for AckMessage {
     }
 }
 impl ToBytes for AckMessage {
-    fn write<W: BufMut>(&self, _: W) {}
+    fn write<W: BufMut>(&self, _: &mut W) {}
 }
 
 impl PacketKind {
@@ -88,7 +88,7 @@ impl PacketKind {
 }
 
 impl ToBytes for PacketId {
-    fn write<W: BufMut>(&self, mut buf: W) {
+    fn write<W: BufMut>(&self, buf: &mut W) {
         buf.put_u8(self.msgid.get());
         buf.put_u16_le(self.blockid);
     }
@@ -107,9 +107,9 @@ impl FromBytes for PacketId {
 }
 
 impl ToBytes for PacketHeader {
-    fn write<W: BufMut>(&self, mut buf: W) {
-        self.kind.write(&mut buf);
-        self.id.write(&mut buf);
+    fn write<W: ByteWriter>(&self, buf: &mut W) {
+        self.kind.write(buf);
+        self.id.write(buf);
         buf.put_u32_le(self.checksum);
     }
 }
@@ -149,7 +149,7 @@ impl FromBytes for PacketKind {
 }
 
 impl ToBytes for PacketKind {
-    fn write<W: BufMut>(&self, mut buf: W) {
+    fn write<W: BufMut>(&self, buf: &mut W) {
         let v = match self {
             Self::Conn => 0,
             Self::Ack => 1,
