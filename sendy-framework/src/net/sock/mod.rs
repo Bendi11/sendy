@@ -3,8 +3,7 @@ mod recv;
 mod tx;
 
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
-    ops::Deref,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     sync::{atomic::AtomicU8, Arc},
 };
 
@@ -12,12 +11,12 @@ use dashmap::DashMap;
 pub(crate) use packet::PacketKind;
 use tokio::{
     net::UdpSocket,
-    sync::{mpsc::Receiver, Notify},
+    sync::Notify,
 };
 
 use self::{
     packet::PacketId,
-    recv::{FinishedMessage, ReliableSocketRecv},
+    recv::ReliableSocketRecv,
     tx::ReliableSocketCongestionControl,
 };
 
@@ -32,18 +31,9 @@ pub struct SocketConfig {
     pub extra_wait_for_ack_ms: usize,
 }
 
-/// Wrapper over a UDP socket that is capable of UDP hole punching to connect to another peer, with
-/// a minimal reliability layer that guarantees messages are received in the order they are
-/// transmitted (unless they dropped for another reason - e.g. the message was too large to accomodate)
-#[derive(Debug)]
-pub(crate) struct ReliableSocket {
-    internal: Arc<ReliableSocketInternal>,
-    recvproc: tokio::task::JoinHandle<()>,
-}
-
 /// State maintained for each connection to a remote peer, created by a [ReliableSocket]
 #[derive(Debug)]
-pub(crate) struct ReliableSocketConnection {
+pub(crate) struct ReliableSocketTransmitter {
     /// Address and port of the remote peer
     remote: SocketAddr,
     /// Counter used to create IDs for transmitted messages
@@ -52,9 +42,11 @@ pub(crate) struct ReliableSocketConnection {
     congestion: ReliableSocketCongestionControl,
 }
 
-/// Internal state for the [ReliableSocket], wrapped in an [Arc]
+/// Wrapper over a UDP socket that is capable of UDP hole punching to connect to another peer, with
+/// a minimal reliability layer that guarantees messages are received in the order they are
+/// transmitted (unless they dropped for another reason - e.g. the message was too large to accomodate)
 #[derive(Debug)]
-pub(crate) struct ReliableSocketInternal {
+pub(crate) struct ReliableSocket {
     /// Map of ports to sockets that have been bound to them
     socks: DashMap<u16, UdpSocket>,
     /// Runtime-configurable options for performance and rate limiting
@@ -65,7 +57,7 @@ pub(crate) struct ReliableSocketInternal {
     recv: ReliableSocketRecv,
 }
 
-impl ReliableSocketConnection {
+impl ReliableSocketTransmitter {
     /// Get the address that this socket is connected to
     #[inline]
     pub const fn remote(&self) -> &SocketAddr {
@@ -78,22 +70,18 @@ impl ReliableSocket {
     pub async fn new(cfg: SocketConfig) -> Self {
         let recv = ReliableSocketRecv::new(&cfg);
 
-        let internal = Arc::new(ReliableSocketInternal {
+        Self {
             socks: DashMap::new(),
             cfg,
             awaiting_ack: DashMap::new(),
             recv,
-        });
-
-        let recvproc = internal.clone().spawn_recv_thread().await;
-
-        Self { internal, recvproc }
+        }
     }
 
-    /// Add a listener for messages on the given port
+    /// Add a listener for packets on the given port
     pub async fn new_binding(&self, port: u16) -> Result<(), std::io::Error> {
-        if !self.internal.socks.contains_key(&port) {
-            self.internal.socks.insert(
+        if !self.socks.contains_key(&port) {
+            self.socks.insert(
                 port,
                 UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)).await?,
             );
@@ -102,47 +90,19 @@ impl ReliableSocket {
         Ok(())
     }
 
-    /// Wait for a request to be sent to the host
-    pub async fn recv(&self) -> (IpAddr, ReceivedMessage) {
-        match self.recv.requests_r.lock().await.recv().await {
-            Some(msg) => (msg.0, msg.1.msg),
-            None => {
-                panic!("Requests channel closed?");
-            }
-        }
-    }
-
-    /// Create a new connection to the given address
-    pub async fn connect(&self, addr: SocketAddr) -> std::io::Result<ReliableSocketConnection> {
+    /// Create flow control state for a single remote peer, adding a listener for the port that the
+    /// peer is located on. Performs no actual network operations.
+    pub async fn create_transmitter(&self, addr: SocketAddr) -> std::io::Result<ReliableSocketTransmitter> {
         self.new_binding(addr.port()).await?;
 
-        Ok(ReliableSocketConnection {
+        Ok(ReliableSocketTransmitter {
             msgid: AtomicU8::new(1),
             remote: addr,
-            congestion: ReliableSocketCongestionControl::new(&self.internal.cfg),
+            congestion: ReliableSocketCongestionControl::new(&self.cfg),
         })
     }
 }
 
-impl AsRef<ReliableSocketInternal> for ReliableSocket {
-    fn as_ref(&self) -> &ReliableSocketInternal {
-        &self.internal
-    }
-}
-
-impl Deref for ReliableSocket {
-    type Target = ReliableSocketInternal;
-
-    fn deref(&self) -> &Self::Target {
-        &self.internal
-    }
-}
-
-impl Drop for ReliableSocket {
-    fn drop(&mut self) {
-        self.recvproc.abort();
-    }
-}
 
 impl Default for SocketConfig {
     fn default() -> Self {

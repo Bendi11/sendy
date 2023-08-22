@@ -64,6 +64,9 @@ pub enum PacketKind {
     /// Signals that the following payload bytes are to be placed at the offset into the message
     /// given by the [PacketId] of the header
     Transfer = 2,
+    /// Signals that the following payload bytes are the response to a request made by the message
+    /// ID of the respond packet's header
+    Respond = 3,
 }
 
 /// Unit struct that implements the [Message] trait with no payload, allowing the lower-level
@@ -139,6 +142,8 @@ impl FromBytes for PacketKind {
             0 => Self::Conn,
             1 => Self::Ack,
             2 => Self::Transfer,
+            3 => Self::Respond,
+            _ => return Err(FromBytesError::Parsing(format!("Invalid packet kind tag {:X}", value))),
         })
     }
 }
@@ -149,6 +154,7 @@ impl ToBytes for PacketKind {
             Self::Conn => 0,
             Self::Ack => 1,
             Self::Transfer => 2,
+            Self::Respond => 3,
         };
         buf.put_u8(v);
     }

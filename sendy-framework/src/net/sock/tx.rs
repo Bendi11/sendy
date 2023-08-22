@@ -17,7 +17,6 @@ use tokio::{
 };
 
 use crate::{
-    net::msg::MessageKind,
     ser::{FromBytes, ToBytes},
 };
 
@@ -26,7 +25,7 @@ use super::{
         PacketHeader, PacketId, BLOCKID_OFFSET, BLOCK_SIZE, CHECKSUM_OFFSET, HEADER_SZ,
         MAX_SAFE_UDP_PAYLOAD,
     },
-    PacketKind, ReliableSocketConnection, ReliableSocketInternal, SocketConfig,
+    PacketKind, ReliableSocketTransmitter, ReliableSocket, SocketConfig,
 };
 
 /// Sensitivity to the RTT measurement to new changes in the response time in 10ths of a ms
@@ -58,7 +57,7 @@ impl ReliableSocketCongestionControl {
     }
 }
 
-impl ReliableSocketConnection {
+impl ReliableSocketTransmitter {
     /// Get the next message ID by incrementing the atomic ID counter
     pub fn next_message_id(&self) -> NonZeroU8 {
         //Ensure that the counter rolls over 0
@@ -74,18 +73,18 @@ impl ReliableSocketConnection {
     }
 }
 
-impl ReliableSocketInternal {
+impl ReliableSocket {
     /// Send a message via UDP to the connected peer of `conn`, returning a channel that will send
     /// a value when the peer responds
     pub async fn send_wait_response<B: ToBytes>(
         &self,
-        conn: &ReliableSocketConnection,
-        kind: MessageKind,
+        conn: &ReliableSocketTransmitter,
+        kind: PacketKind,
         req: B,
     ) -> std::io::Result<impl Future<Output = Bytes>> {
         let msgid = conn.next_message_id();
         let recv = self.wait_response(conn.remote.ip(), msgid);
-        self.send_with_id(conn, msgid, PacketKind::Message(kind), req)
+        self.send_with_id(conn, msgid, kind, req)
             .await?;
 
         Ok(async {
@@ -102,7 +101,7 @@ impl ReliableSocketInternal {
     /// Send a message to the connected peer via UDP *without* waiting for a response message
     pub async fn send<B: ToBytes>(
         &self,
-        conn: &ReliableSocketConnection,
+        conn: &ReliableSocketTransmitter,
         kind: PacketKind,
         msg: B,
     ) -> std::io::Result<()> {
@@ -115,7 +114,7 @@ impl ReliableSocketInternal {
     /// general-purpose method
     pub async fn send_with_id<B: ToBytes>(
         &self,
-        conn: &ReliableSocketConnection,
+        conn: &ReliableSocketTransmitter,
         id: NonZeroU8,
         kind: PacketKind,
         msg: B,
@@ -192,7 +191,7 @@ impl ReliableSocketInternal {
     /// Repeatedly send the given packet via UDP while waiting for an ACK packet in response
     async fn send_wait_ack(
         &self,
-        conn: &ReliableSocketConnection,
+        conn: &ReliableSocketTransmitter,
         id: PacketId,
         pkt: &[u8],
     ) -> std::io::Result<()> {
@@ -364,57 +363,4 @@ unsafe impl BufMut for MessageSplitter {
 
         self.buf.advance_mut(cnt);
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        net::msg::{MessageKind, TestMessage},
-        req::Request,
-    };
-
-    use super::*;
-
-    /*#[test]
-    fn test_message_splitter() {
-        const TEST_LEN: usize = 5_020_000;
-        let msgid = NonZeroU8::new(50).unwrap();
-        let payload = (0..TEST_LEN)
-            .map(|v| v.to_le_bytes()[0])
-            .collect::<Vec<u8>>();
-        let mut splitter = MessageSplitter::new(PacketKind::Message(MessageKind::Test), msgid);
-        let packet = TestMessage(payload.clone());
-
-        packet.write(&mut splitter);
-
-        let packets = splitter.into_packet_iter().collect::<Vec<_>>();
-        let blocks = TEST_LEN / BLOCK_SIZE + if TEST_LEN % BLOCK_SIZE != 0 { 1 } else { 0 };
-        assert_eq!(
-            packets.len(),
-            TEST_LEN / BLOCK_SIZE + if TEST_LEN % BLOCK_SIZE != 0 { 1 } else { 0 }
-        );
-
-        let chk1 = crc32fast::hash(&payload[..BLOCK_SIZE]);
-        assert_eq!(
-            PacketHeader::parse(&mut untrusted::Reader::new(untrusted::Input::from(
-                &packets[0].1
-            )))
-            .unwrap(),
-            PacketHeader {
-                kind: PacketKind::Message(TestMessage::KIND),
-                id: PacketId {
-                    msgid,
-                    blockid: blocks as u16
-                },
-                checksum: chk1,
-            }
-        );
-
-        for ((_, packet), chunk) in packets.iter().zip(payload.chunks(BLOCK_SIZE)) {
-            assert_eq!(
-                &packet[HEADER_SZ..],
-                chunk
-            );
-        }
-    }*/
 }
