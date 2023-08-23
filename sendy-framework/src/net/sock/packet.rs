@@ -79,7 +79,7 @@ impl ToBytes for PacketId {
     }
 }
 
-impl FromBytes for PacketId {
+impl FromBytes<'_> for PacketId {
     fn decode(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
         let msgid = u8::decode(buf)?;
         let msgid = NonZeroU8::new(msgid).ok_or_else(|| {
@@ -100,7 +100,7 @@ impl ToBytes for PacketHeader {
     }
 }
 
-impl FromBytes for PacketHeader {
+impl FromBytes<'_> for PacketHeader {
     fn decode(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
         let kind = PacketKind::decode(buf)?;
         let id = PacketId::decode(buf)?;
@@ -121,7 +121,7 @@ impl PacketKind {
     }
 }
 
-impl FromBytes for PacketKind {
+impl FromBytes<'_> for PacketKind {
     fn decode(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
         let value = u8::decode(buf)?;
         Ok(match value {

@@ -1,6 +1,6 @@
 use rsa::{
     pkcs1v15::{DecryptingKey, EncryptingKey, SigningKey, VerifyingKey},
-    pkcs8::{der::Decode, EncodePrivateKey, EncodePublicKey, PrivateKeyInfo},
+    pkcs8::{der::Decode, EncodePrivateKey, EncodePublicKey, DecodePublicKey, PrivateKeyInfo},
     RsaPrivateKey, RsaPublicKey,
 };
 use sha2::Sha256;
@@ -56,6 +56,13 @@ impl ToBytes for RsaPublicKey {
         Ok(())
     }
 }
+impl FromBytes<'_> for RsaPublicKey {
+    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let bytes = <&[u8] as FromBytes>::decode(reader)?;
+        RsaPublicKey::from_public_key_der(bytes)
+            .map_err(|e| FromBytesError::Parsing(format!("Failed to read public key DER: {}", e)))
+    }
+}
 
 impl ToBytes for RsaPrivateKey {
     fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
@@ -68,8 +75,7 @@ impl ToBytes for RsaPrivateKey {
         Ok(())
     }
 }
-
-impl FromBytes for RsaPrivateKey {
+impl FromBytes<'_> for RsaPrivateKey {
     fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let bytes = <Vec<u8> as FromBytes>::decode(reader)?;
         RsaPrivateKey::try_from(
