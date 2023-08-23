@@ -9,7 +9,7 @@ pub trait ByteWriter: BufMut + Sized {
     /// Write the byte representation of the given value to `self`, and return the bytes that were
     /// written, used to sign the encoded representation of `val`
     fn write_partial<'a, T: ToBytes>(&'a mut self, val: &T) -> Cow<'a, [u8]> {
-        let buf = val.write_to_vec();
+        let buf = val.encode_to_vec();
         self.put_slice(&buf);
         Cow::Owned(buf)
     }
@@ -18,7 +18,7 @@ pub trait ByteWriter: BufMut + Sized {
 impl ByteWriter for Vec<u8> {
     fn write_partial<'a, T: ToBytes>(&'a mut self, val: &T) -> Cow<'a, [u8]> {
         let start_idx = self.len();
-        val.write(self);
+        val.encode(self);
         Cow::Borrowed(&self[start_idx..])
     }
 }
@@ -26,31 +26,29 @@ impl ByteWriter for Vec<u8> {
 impl<T: ByteWriter> ByteWriter for &mut T {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct BytesWriter<B: BufMut>(pub B);
+pub(crate) struct BufMutByteWriter<B: BufMut>(pub B);
 
-unsafe impl<B: BufMut> BufMut for BytesWriter<B> {
+unsafe impl<B: BufMut> BufMut for BufMutByteWriter<B> {
     fn remaining_mut(&self) -> usize { self.0.remaining_mut() }
     unsafe fn advance_mut(&mut self, cnt: usize) { self.0.advance_mut(cnt) }
     fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice { self.0.chunk_mut() }
 }
 
 impl ByteWriter for BytesMut {}
-impl<B: BufMut> ByteWriter for BytesWriter<B> {}
+impl<B: BufMut> ByteWriter for BufMutByteWriter<B> {}
 
 /// Trait to be implemented by all types that can be written to a byte buffer
 pub trait ToBytes: Sized {
     /// Write the representation of this payload to a buffer of bytes
-    fn write<W: ByteWriter>(&self, buf: &mut W);
+    fn encode<W: ByteWriter>(&self, buf: &mut W);
 
     /// Provide the encoded size in bytes of this value
-    fn size_hint(&self) -> Option<usize> {
-        None
-    }
+    fn size_hint(&self) -> usize { 0 }
 
     /// Write the full representation of [self] to a vec of bytes
-    fn write_to_vec(&self) -> Vec<u8> {
-        let mut buf = Vec::<u8>::with_capacity(self.size_hint().unwrap_or(0));
-        self.write(&mut buf);
+    fn encode_to_vec(&self) -> Vec<u8> {
+        let mut buf = Vec::<u8>::with_capacity(self.size_hint());
+        self.encode(&mut buf);
         buf
     }
 }
@@ -60,76 +58,73 @@ pub trait ToBytes: Sized {
 pub trait FromBytes: Sized {
     /// Read bytes the given buffer (multi-byte words should be little endian) to create an
     /// instance of `Self`
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError>;
+    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError>;
 
     /// Helper function to read an instance of `Self` without needing to create [untrusted] types
-    fn read_from_slice(slice: &[u8]) -> Result<Self, FromBytesError> {
+    fn decode_from_slice(slice: &[u8]) -> Result<Self, FromBytesError> {
         let mut reader = untrusted::Reader::new(untrusted::Input::from(slice));
-        Self::parse(&mut reader)
+        Self::decode(&mut reader)
     }
     
     /// Parse an instance of `Self` and return a tuple of the bytes that were parsed and the
     /// instance
-    fn partial_read_from_slice(slice: &[u8]) -> Result<(&[u8], Self), FromBytesError> {
+    fn partial_decode_from_slice(slice: &[u8]) -> Result<(&[u8], Self), FromBytesError> {
         let mut reader = untrusted::Reader::new(untrusted::Input::from(slice));
-        let (read, this) = reader.read_partial(Self::parse)?;
+        let (read, this) = reader.read_partial(Self::decode)?;
         Ok((read.as_slice_less_safe(), this))
     }
 }
 
 impl<T: ToBytes> ToBytes for &T {
-    fn write<W: ByteWriter>(&self, buf: &mut W) {
-        (*self).write(buf)
-    }
+    fn encode<W: ByteWriter>(&self, buf: &mut W) { (*self).encode(buf) }
+    fn size_hint(&self) -> usize { (*self).size_hint() }
+    fn encode_to_vec(&self) -> Vec<u8> { (*self).encode_to_vec() }
 }
 
 type VecToBytesLenType = u32;
 
+/// Format: 
+/// 4 byte length
+/// Variable length data
 impl<T: ToBytes> ToBytes for Vec<T> {
-    fn write<B: ByteWriter>(&self, buf: &mut B) {
-        buf.put_u32_le(self.len() as VecToBytesLenType);
+    fn encode<B: ByteWriter>(&self, buf: &mut B) {
+        (self.len() as VecToBytesLenType).encode(buf);
         for elem in self.iter() {
-            elem.write(buf);
+            elem.encode(buf);
         }
     }
 
-    fn size_hint(&self) -> Option<usize> {
-        let elements = self
+    fn size_hint(&self) -> usize {
+        let elements: usize = self
             .iter()
             .map(|elem| elem.size_hint())
-            .fold(Some(0usize), |acc, elem| {
-                if let (Some(acc), Some(elem)) = (acc, elem) {
-                    Some(acc + elem)
-                } else {
-                    None
-                }
-            });
+            .sum();
 
-        elements.map(|sz| sz + std::mem::size_of::<VecToBytesLenType>())
+        elements + std::mem::size_of::<VecToBytesLenType>()
     }
 }
 
 impl<T: FromBytes> FromBytes for Vec<T> {
-    fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let len: VecToBytesLenType = VecToBytesLenType::parse(buf)?;
-        (0..len).map(|_| T::parse(buf)).collect::<Result<Self, _>>()
+    fn decode(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let len: VecToBytesLenType = VecToBytesLenType::decode(buf)?;
+        (0..len).map(|_| T::decode(buf)).collect::<Result<Self, _>>()
     }
 }
 
 macro_rules! integral_from_to_bytes {
     ($type:ty: $get_method_name:ident, $put_method_name:ident) => {
         impl ToBytes for $type {
-            fn write<B: ByteWriter>(&self, buf: &mut B) {
+            fn encode<B: ByteWriter>(&self, buf: &mut B) {
                 buf.$put_method_name(*self)
             }
 
-            fn size_hint(&self) -> Option<usize> {
-                Some(std::mem::size_of::<Self>())
+            fn size_hint(&self) -> usize {
+                std::mem::size_of::<Self>()
             }
         }
 
         impl FromBytes for $type {
-            fn parse(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+            fn decode(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
                 let bytes = buf.read_bytes(std::mem::size_of::<Self>())?;
                 Ok(bytes.as_slice_less_safe().$get_method_name())
             }
@@ -148,10 +143,8 @@ integral_from_to_bytes! {i32: get_i32_le, put_i32_le}
 integral_from_to_bytes! {i64: get_i64_le, put_i64_le}
 
 impl ToBytes for () {
-    fn write<W: BufMut>(&self, _buf: &mut W) {}
-    fn size_hint(&self) -> Option<usize> {
-        Some(0)
-    }
+    fn encode<W: BufMut>(&self, _buf: &mut W) {}
+    fn size_hint(&self) -> usize { 0 }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -174,38 +167,45 @@ impl From<untrusted::EndOfInput> for FromBytesError {
 const IPVERSION_MARKER_V4: u8 = 4;
 const IPVERSION_MARKER_V6: u8 = 6;
 
+const fn ipaddr_tag(addr: &IpAddr) -> u8 {
+    match addr {
+        IpAddr::V4(_) => IPVERSION_MARKER_V4,
+        IpAddr::V6(_) => IPVERSION_MARKER_V6,
+    }
+}
+
 /// Format of general (IPv4 or IPv6) IP address:
 /// ipversion - 1 byte - 4 for ipv4 and 6 for ipv6
 /// addr - 4 or 16 bytes - based on ipversion
 impl ToBytes for IpAddr {
-    fn write<B: ByteWriter>(&self, buf: &mut B) {
+    fn encode<B: ByteWriter>(&self, buf: &mut B) {
+        ipaddr_tag(self).encode(buf);
         match self {
             Self::V4(v4addr) => {
-                buf.put_u8(IPVERSION_MARKER_V4);
-                v4addr.write(buf);
+                v4addr.encode(buf);
             }
             Self::V6(v6addr) => {
-                buf.put_u8(IPVERSION_MARKER_V6);
-                v6addr.write(buf);
+                v6addr.encode(buf);
             }
         }
     }
 
-    fn size_hint(&self) -> Option<usize> {
-        match self {
+    fn size_hint(&self) -> usize {
+        let sz = match self {
             Self::V4(addr) => addr.size_hint(),
             Self::V6(addr) => addr.size_hint(),
-        }
-        .map(|sz| sz + 1)
+        };
+
+        sz + ipaddr_tag(self).size_hint()
     }
 }
 
 impl FromBytes for IpAddr {
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let marker = reader.read_byte()?;
+    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let marker = u8::decode(reader)?;
         Ok(match marker {
-            IPVERSION_MARKER_V4 => Self::V4(Ipv4Addr::parse(reader)?),
-            IPVERSION_MARKER_V6 => Self::V6(Ipv6Addr::parse(reader)?),
+            IPVERSION_MARKER_V4 => Self::V4(Ipv4Addr::decode(reader)?),
+            IPVERSION_MARKER_V6 => Self::V6(Ipv6Addr::decode(reader)?),
             _ => {
                 return Err(FromBytesError::Parsing(format!(
                     "Unknown IP version marker {:X}",
@@ -219,13 +219,15 @@ impl FromBytes for IpAddr {
 /// Format of IPv4 address:
 /// addr - 4 bytes - big endian address
 impl ToBytes for Ipv4Addr {
-    fn write<W: BufMut>(&self, buf: &mut W) {
+    fn encode<W: BufMut>(&self, buf: &mut W) {
         buf.put_slice(&self.octets());
     }
+
+    fn size_hint(&self) -> usize { 4 }
 }
 
 impl FromBytes for Ipv4Addr {
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let mut buf = [0u8; 4];
         for idx in 0..buf.len() {
             buf[idx] = reader.read_byte()?;
@@ -237,18 +239,16 @@ impl FromBytes for Ipv4Addr {
 /// Format of IPv6 address:
 /// addr - 16 bytes - big endian address
 impl ToBytes for Ipv6Addr {
-    fn write<W: ByteWriter>(&self, buf: &mut W) {
+    fn encode<W: ByteWriter>(&self, buf: &mut W) {
         let octets = self.octets();
         buf.put_slice(&octets);
     }
 
-    fn size_hint(&self) -> Option<usize> {
-        Some(16)
-    }
+    fn size_hint(&self) -> usize { 16 }
 }
 
 impl FromBytes for Ipv6Addr {
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let mut buf = [0u8; 16];
         for idx in 0..buf.len() {
             buf[idx] = reader.read_byte()?;
@@ -261,36 +261,32 @@ impl FromBytes for Ipv6Addr {
 /// len - 4 bytes - [u32](std::u32)
 /// bytes - `len` bytes
 impl ToBytes for String {
-    fn write<W: ByteWriter>(&self, buf: &mut W) {
-        (self.as_bytes().len() as u32).write(buf);
+    fn encode<W: ByteWriter>(&self, buf: &mut W) {
+        (self.as_bytes().len() as u32).encode(buf);
         buf.put_slice(&self.as_bytes())
     }
 
-    fn size_hint(&self) -> Option<usize> {
-        Some(self.as_bytes().len())
-    }
+    fn size_hint(&self) -> usize { self.as_bytes().len() + (self.len() as u32).size_hint() }
 }
 
 impl FromBytes for String {
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let len = u32::parse(reader)?;
+    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let len = u32::decode(reader)?;
         let bytes = reader.read_bytes(len as usize)?;
         Ok(Self::from_utf8_lossy(bytes.as_slice_less_safe()).into_owned())
     }
 }
 
 impl<const N: usize> ToBytes for [u8; N] {
-    fn write<W: ByteWriter>(&self, buf: &mut W) {
+    fn encode<W: ByteWriter>(&self, buf: &mut W) {
         buf.put_slice(self.as_slice())
     }
 
-    fn size_hint(&self) -> Option<usize> {
-        Some(N)
-    }
+    fn size_hint(&self) -> usize { N }
 }
 
 impl<const N: usize> FromBytes for [u8; N] {
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let mut this = [0u8; N];
         for idx in 0..N {
             this[idx] = reader.read_byte()?;
@@ -303,18 +299,16 @@ impl<const N: usize> FromBytes for [u8; N] {
 /// Format:
 /// UNIX timestamp - 8 bytes
 impl ToBytes for chrono::DateTime<Utc> {
-    fn write<W: ByteWriter>(&self, buf: &mut W) {
-        self.timestamp().write(buf)
+    fn encode<W: ByteWriter>(&self, buf: &mut W) {
+        self.timestamp().encode(buf)
     }
 
-    fn size_hint(&self) -> Option<usize> {
-        self.timestamp().size_hint()
-    }
+    fn size_hint(&self) -> usize { self.timestamp().size_hint() }
 }
 
 impl FromBytes for chrono::DateTime<Utc> {
-    fn parse(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let ts = i64::parse(reader)?;
+    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let ts = i64::decode(reader)?;
         let naive = match NaiveDateTime::from_timestamp_millis(ts) {
             Some(dt) => dt,
             None => {

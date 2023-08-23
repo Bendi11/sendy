@@ -17,7 +17,7 @@ use tokio::{
 };
 
 use crate::{
-    ser::{FromBytes, ToBytes, ByteWriter, BytesWriter},
+    ser::{FromBytes, ToBytes, ByteWriter, BufMutByteWriter},
 };
 
 use super::{
@@ -120,7 +120,7 @@ impl ReliableSocket {
         msg: B,
     ) -> std::io::Result<()> {
         let mut splitter = MessageSplitter::new(kind, id);
-        msg.write(&mut splitter);
+        msg.encode(&mut splitter);
         let mut pkts = splitter
             .into_packet_iter()
             .map(|(id, pkt)| self.send_wait_ack(conn, id, pkt));
@@ -165,22 +165,19 @@ impl ReliableSocket {
         kind: PacketKind,
         msg: B,
     ) -> std::io::Result<()> {
-        let encoded_sz = msg.size_hint();
         //allocate extra space in the packet buffer for the header
-        let mut buf = BytesMut::with_capacity(msg.size_hint().unwrap_or(0) + HEADER_SZ);
+        let mut buf = BytesMut::with_capacity(msg.size_hint() + HEADER_SZ);
 
         //Don't waste time writing nothing and calculating the checksum if there is no payload
-        let checksum = if encoded_sz == Some(0) {
-            0
-        } else {
+        let checksum = {
             buf.put_slice(&[0u8; HEADER_SZ]);
-            msg.write(&mut buf);
+            msg.encode(&mut buf);
             crc32fast::hash(&buf[HEADER_SZ..])
         };
 
         let header = PacketHeader { kind, id, checksum };
 
-        header.write(&mut BytesWriter((&mut buf).limit(HEADER_SZ)));
+        header.encode(&mut buf);
 
         let sock = self.get_sock(addr.port())?;
         sock.send_to(&buf, addr).await?;
@@ -312,7 +309,7 @@ impl MessageSplitter {
         self.buf.chunks_mut(MAX_SAFE_UDP_PAYLOAD).map(|pkt| {
             let checksum = crc32fast::hash(&pkt[HEADER_SZ..]);
             (&mut pkt[CHECKSUM_OFFSET..]).put_u32_le(checksum);
-            let id = PacketId::parse(&mut untrusted::Reader::new(untrusted::Input::from(
+            let id = PacketId::decode(&mut untrusted::Reader::new(untrusted::Input::from(
                 &pkt[1..],
             )))
             .expect("MessageSplitter produced invalid packet id");
@@ -337,7 +334,7 @@ impl MessageSplitter {
         };
 
         self.blockid += 1;
-        header.write(&mut self.buf);
+        header.encode(&mut self.buf);
     }
 }
 

@@ -69,56 +69,38 @@ pub enum PacketKind {
     Respond = 3,
 }
 
-/// Unit struct that implements the [Message] trait with no payload, allowing the lower-level
-/// functions to send ACK packets with the same interface as other messages
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct AckMessage;
-
-impl FromBytes for AckMessage {
-    fn parse(_: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
-        Ok(Self)
-    }
-}
-impl ToBytes for AckMessage {
-    fn write<W: BufMut>(&self, _: &mut W) {}
-}
-
-impl PacketKind {
-    
-}
-
 impl ToBytes for PacketId {
-    fn write<W: BufMut>(&self, buf: &mut W) {
+    fn encode<W: BufMut>(&self, buf: &mut W) {
         buf.put_u8(self.msgid.get());
         buf.put_u16_le(self.blockid);
     }
 }
 
 impl FromBytes for PacketId {
-    fn parse(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
-        let msgid = u8::parse(buf)?;
+    fn decode(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
+        let msgid = u8::decode(buf)?;
         let msgid = NonZeroU8::new(msgid).ok_or_else(|| {
             FromBytesError::Parsing("Packet ID with invalid message ID 0".to_owned())
         })?;
 
-        let blockid = u16::parse(buf)?;
+        let blockid = u16::decode(buf)?;
         Ok(Self { msgid, blockid })
     }
 }
 
 impl ToBytes for PacketHeader {
-    fn write<W: ByteWriter>(&self, buf: &mut W) {
-        self.kind.write(buf);
-        self.id.write(buf);
+    fn encode<W: ByteWriter>(&self, buf: &mut W) {
+        self.kind.encode(buf);
+        self.id.encode(buf);
         buf.put_u32_le(self.checksum);
     }
 }
 
 impl FromBytes for PacketHeader {
-    fn parse(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
-        let kind = PacketKind::parse(buf)?;
-        let id = PacketId::parse(buf)?;
-        let checksum = u32::parse(buf)?;
+    fn decode(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
+        let kind = PacketKind::decode(buf)?;
+        let id = PacketId::decode(buf)?;
+        let checksum = u32::decode(buf)?;
 
         Ok(Self { kind, id, checksum })
     }
@@ -136,8 +118,8 @@ impl PacketKind {
 }
 
 impl FromBytes for PacketKind {
-    fn parse(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
-        let value = u8::parse(buf)?;
+    fn decode(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
+        let value = u8::decode(buf)?;
         Ok(match value {
             0 => Self::Conn,
             1 => Self::Ack,
@@ -149,7 +131,7 @@ impl FromBytes for PacketKind {
 }
 
 impl ToBytes for PacketKind {
-    fn write<W: BufMut>(&self, buf: &mut W) {
+    fn encode<W: BufMut>(&self, buf: &mut W) {
         let v = match self {
             Self::Conn => 0,
             Self::Ack => 1,

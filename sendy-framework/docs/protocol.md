@@ -18,7 +18,7 @@ A network of peers that implement the sendy protocol should be able to:
 A Node is one machine that is connected to the wider network of other nodes.
 A node must have available:
  * A [session certificate](#Session Certificate)
- 
+
 
 ## Session Certificate
 A node's certificate asserts ownership over their IP address and public authentication key.
@@ -89,7 +89,7 @@ Posts must contain:
    - Author's public key fingerprint
    - Timestamp the message was authored at
    - Channel ID the message was sent in
- - A UTF-8 encoded message body of at most 3MB in size, encrypted with the channel's symmetric key
+ - A UTF-8 encoded message body of at most ~2.8MB in size, encrypted with the channel's symmetric key
  - A signature created from the header and encrypted message
 
 # Messages
@@ -111,11 +111,11 @@ If a sender does not receive an ACK packet in a certain time limit, they will re
 
 ## PING Packet
 A single packet that must be sent to ensure that a peer is still connected.
-Peers must respond to a PING packet with another response PING packet.
+Peers must respond to a PING packet with another response packet.
 
 ## TUNNEL Packet
 TUNNEL packets are to be acknowledged but otherwise unused.
-Their purpose is to allow basic UDP tunneling through UDP by bidirectional transfer of packets that forces a NAT to make a routing entry.
+Their purpose is to allow basic NAT traversal through UDP by bidirectional transfer of packets that forces a NAT to make a routing entry.
 To connect via UDP tunneling, two peers must find each other via another node that offers introduction [capabilities](#Capabilities).
 
 After agreeing to a connection port, the nodes both send TUNNEL packets with no payload to each other. When one node receives an
@@ -128,3 +128,11 @@ They contain a list of [resource IDs](#Resource) in self-identifying form (prece
 ## RESOURCE Packet
 RESOURCE messages are used to transfer a group of resources to another peer.
 They contain a count of resources included, self-describing resource IDs and the encoded resources.
+
+## CONN Packet
+CONN messages are used to transfer a session certificate to another peer and establish an authenticated connection.
+A CONN message must be responded to with the connected-to peer's certificate.
+
+## DROP Packet
+DROP packets are sent to notify a peer that the connection has been closed.
+It contains a two-byte reason tag specifying why the connection was dropped, and must be acknowledged like any other packet.

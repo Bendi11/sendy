@@ -209,7 +209,7 @@ impl ReliableSocket {
         let reader = untrusted::Input::from(&buf[0..HEADER_SZ]);
         let header = match reader.read_all(
             FromBytesError::Parsing("Trailing bytes in packet header".to_owned()),
-            PacketHeader::parse,
+            PacketHeader::decode,
         ) {
             Ok(header) => header,
             Err(e) => {
