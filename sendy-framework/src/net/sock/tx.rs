@@ -16,9 +16,7 @@ use tokio::{
     sync::{oneshot, Notify, Semaphore},
 };
 
-use crate::{
-    ser::{FromBytes, ToBytes, ByteWriter, BufMutByteWriter},
-};
+use crate::ser::{FromBytes, ToBytes, ByteWriter};
 
 use super::{
     packet::{

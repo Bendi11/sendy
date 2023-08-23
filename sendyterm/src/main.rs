@@ -6,7 +6,7 @@ use std::{
 
 use clap::{Parser, Subcommand};
 
-use sendy_framework::{ctx::Context, model::crypto::PrivateKeychain, rsa};
+use sendy_framework::{Context, model::crypto::PrivateKeychain, rsa::{self, pkcs1v15::DecryptingKey}, SocketConfig};
 
 #[derive(Parser)]
 #[command(name = "sendy")]
@@ -108,7 +108,7 @@ async fn main() {
             let encrypt = rsa::RsaPrivateKey::new(&mut rng, bits as usize).unwrap();
 
             keystore
-                .store(&PrivateKeychain::new(signature, encrypt))
+                .store(&PrivateKeychain::new(signature.into(), encrypt))
                 .await;
         }
         CliCommand::Run { username, publicip, ports } => {
@@ -122,12 +122,12 @@ async fn main() {
                     let signature = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
                     let encrypt = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
 
-                    PrivateKeychain::new(signature, encrypt)
+                    PrivateKeychain::new(signature.into(), encrypt)
                 }
             };
 
             let ctx =
-                Context::new(keychain, std::net::IpAddr::V4(publicip), "USER".to_owned()).await;
+                Context::new(keychain, SocketConfig::default(), "USER".to_owned());
 
             for port in ports {
                 if let Err(e) = ctx.listen(port).await {

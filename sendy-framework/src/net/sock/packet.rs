@@ -3,7 +3,7 @@ use std::{fmt, num::NonZeroU8};
 use bytes::BufMut;
 
 use crate::{
-    ser::{FromBytes, FromBytesError, ToBytes, ByteWriter},
+    ser::{FromBytes, FromBytesError, ToBytes, ByteWriter, ToBytesError},
 };
 
 /// 'minimum maximum reassembly buffer size' guaranteed to be deliverable, minus IP and UDP headers
@@ -70,9 +70,15 @@ pub enum PacketKind {
 }
 
 impl ToBytes for PacketId {
-    fn encode<W: BufMut>(&self, buf: &mut W) {
+    fn encode<W: BufMut>(&self, buf: &mut W) -> Result<(), ToBytesError> {
         buf.put_u8(self.msgid.get());
         buf.put_u16_le(self.blockid);
+        Ok(())
+    }
+
+    fn size_hint(&self) -> usize {
+        self.msgid.get().size_hint() +
+        self.blockid.size_hint()
     }
 }
 
@@ -89,10 +95,11 @@ impl FromBytes for PacketId {
 }
 
 impl ToBytes for PacketHeader {
-    fn encode<W: ByteWriter>(&self, buf: &mut W) {
-        self.kind.encode(buf);
-        self.id.encode(buf);
-        buf.put_u32_le(self.checksum);
+    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
+        self.kind.encode(buf)?;
+        self.id.encode(buf)?;
+        self.checksum.encode(buf)?;
+        Ok(())
     }
 }
 
@@ -131,7 +138,7 @@ impl FromBytes for PacketKind {
 }
 
 impl ToBytes for PacketKind {
-    fn encode<W: BufMut>(&self, buf: &mut W) {
+    fn encode<W: BufMut>(&self, buf: &mut W) -> Result<(), ToBytesError>  {
         let v = match self {
             Self::Conn => 0,
             Self::Ack => 1,
@@ -139,6 +146,7 @@ impl ToBytes for PacketKind {
             Self::Respond => 3,
         };
         buf.put_u8(v);
+        Ok(())
     }
 }
 

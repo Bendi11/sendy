@@ -38,8 +38,8 @@ mod filestore {
                 log::warn!("Failed to create private keys folder: {}", e);
             }
 
-            match keys.auth.to_pkcs8_der()
-                .and_then(|auth| keys.enc.to_pkcs8_der().map(|enc| (auth, enc))) {
+            match keys.authentication.to_pkcs8_der()
+                .and_then(|auth| keys.decryption.to_pkcs8_der().map(|enc| (auth, enc))) {
                     Ok((auth, enc)) => if let Err(e) = std::fs::write(Self::AUTHKEY_PATH, auth.as_bytes())
                         .and_then(|_| std::fs::write(Self::ENCKEY_PATH, enc.as_bytes())) {
                             log::error!("Failed to write keys to file {}", e);
@@ -59,7 +59,7 @@ mod filestore {
                         .and_then(|auth| RsaPrivateKey::from_pkcs8_der(&enc)
                             .map(|enc| (auth, enc))
                         ) {
-                            Ok((auth, enc)) => Some(PrivateKeychain::new(auth, enc)),
+                            Ok((auth, enc)) => Some(PrivateKeychain::new(auth.into(), enc)),
                             Err(e) => {
                                 log::error!("Failed to decode private key from PKCS#8 DER: {}", e);
                                 None
@@ -129,7 +129,7 @@ mod secserv {
                 }
             }
 
-            let auth_key = keys.auth.as_ref().write_to_vec();
+            let auth_key = keys.authentication.as_ref().encode_to_vec();
             if let Err(e) = collection
                 .create_item(
                     Self::AUTHENTICATION_KEY_LABEL,
@@ -144,7 +144,7 @@ mod secserv {
                 return;
             }
 
-            let enc_key = keys.enc.write_to_vec();
+            let enc_key = keys.decryption.encode_to_vec();
             if let Err(e) = collection
                 .create_item(
                     Self::ENCRYPTION_KEY_LABEL,
@@ -207,10 +207,10 @@ mod secserv {
                             .await
                         {
                             Ok((auth, enc)) => {
-                                match RsaPrivateKey::read_from_slice(&auth).and_then(|auth| {
-                                    RsaPrivateKey::read_from_slice(&enc).map(|enc| (auth, enc))
+                                match RsaPrivateKey::decode_from_slice(&auth).and_then(|auth| {
+                                    RsaPrivateKey::decode_from_slice(&enc).map(|enc| (auth, enc))
                                 }) {
-                                    Ok((auth, enc)) => Some(PrivateKeychain::new(auth, enc)),
+                                    Ok((auth, enc)) => Some(PrivateKeychain::new(auth.into(), enc)),
                                     Err(e) => {
                                         log::error!(
                                             "Failed to decode RSA keys from secrets: {}",

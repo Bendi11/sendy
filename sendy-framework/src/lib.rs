@@ -7,8 +7,10 @@ pub mod model;
 use std::sync::Arc;
 
 use model::crypto::PrivateKeychain;
-use net::sock::{ReliableSocket, SocketConfig};
+use net::sock::ReliableSocket;
+pub use net::sock::SocketConfig;
 pub use ser::{FromBytes, FromBytesError, ToBytes};
+pub use rsa;
 
 
 /// The main interface for interacting with the Sendy network - contains state for all peer
@@ -23,11 +25,17 @@ pub struct Context {
 
 impl Context {
     /// Create a new `Context` with the given keychain for authentication and encryption
-    pub fn new(keychain: PrivateKeychain, cfg: SocketConfig) -> Arc<Self> {
+    pub fn new(keychain: PrivateKeychain, cfg: SocketConfig,  username: String) -> Arc<Self> {
         let socks = ReliableSocket::new(cfg);
         Arc::new(Self {
             socks,
             keychain,
         })
+    }
+        
+    /// Listen for incoming connections on the given port
+    #[inline]
+    pub async fn listen(&self, port: u16) -> std::io::Result<()> {
+        self.socks.new_binding(port).await
     }
 }
