@@ -9,16 +9,9 @@ use std::{
 
 use dashmap::DashMap;
 pub(crate) use packet::PacketKind;
-use tokio::{
-    net::UdpSocket,
-    sync::Notify,
-};
+use tokio::{net::UdpSocket, sync::Notify};
 
-use self::{
-    packet::PacketId,
-    recv::ReliableSocketRecv,
-    tx::ReliableSocketCongestionControl,
-};
+use self::{packet::PacketId, recv::ReliableSocketRecv, tx::ReliableSocketCongestionControl};
 
 /// Configuration options for a socket connection
 #[derive(Debug)]
@@ -92,7 +85,10 @@ impl ReliableSocket {
 
     /// Create flow control state for a single remote peer, adding a listener for the port that the
     /// peer is located on. Performs no actual network operations.
-    pub async fn create_transmitter(&self, addr: SocketAddr) -> std::io::Result<ReliableSocketTransmitter> {
+    pub async fn create_transmitter(
+        &self,
+        addr: SocketAddr,
+    ) -> std::io::Result<ReliableSocketTransmitter> {
         self.new_binding(addr.port()).await?;
 
         Ok(ReliableSocketTransmitter {

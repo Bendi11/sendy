@@ -1,7 +1,14 @@
-use rsa::{pkcs1v15::{SigningKey, DecryptingKey, VerifyingKey, EncryptingKey}, pkcs8::{EncodePublicKey, EncodePrivateKey, PrivateKeyInfo, der::Decode}, RsaPublicKey, RsaPrivateKey};
+use rsa::{
+    pkcs1v15::{DecryptingKey, EncryptingKey, SigningKey, VerifyingKey},
+    pkcs8::{der::Decode, EncodePrivateKey, EncodePublicKey, PrivateKeyInfo},
+    RsaPrivateKey, RsaPublicKey,
+};
 use sha2::Sha256;
 
-use crate::{ToBytes, ser::{ByteWriter, ToBytesError, LenType}, FromBytes, FromBytesError};
+use crate::{
+    ser::{ByteWriter, LenType, ToBytesError},
+    FromBytes, FromBytesError, ToBytes,
+};
 
 /// Public authentication and encryption keys
 #[derive(Clone, Debug)]
@@ -12,7 +19,7 @@ pub struct PublicKeychain {
     pub encryption: EncryptingKey,
 }
 
-/// Private keys used to authenticate and exhcange symmetric encryption keys 
+/// Private keys used to authenticate and exhcange symmetric encryption keys
 #[derive(Debug)]
 pub struct PrivateKeychain {
     /// Key used to sign messages to verify the authenticity of a resource
@@ -52,9 +59,9 @@ impl ToBytes for RsaPublicKey {
 
 impl ToBytes for RsaPrivateKey {
     fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
-        let der = self
-            .to_pkcs8_der()
-            .map_err(|e| ToBytesError::InvalidValue(format!("Failed to encode private key as DER: {}", e)))?;
+        let der = self.to_pkcs8_der().map_err(|e| {
+            ToBytesError::InvalidValue(format!("Failed to encode private key as DER: {}", e))
+        })?;
 
         (der.as_bytes().len() as LenType).encode(buf)?;
         buf.put_slice(der.as_bytes());
@@ -64,10 +71,16 @@ impl ToBytes for RsaPrivateKey {
 
 impl FromBytes for RsaPrivateKey {
     fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let bytes = <Vec::<u8> as FromBytes>::decode(reader)?;
+        let bytes = <Vec<u8> as FromBytes>::decode(reader)?;
         RsaPrivateKey::try_from(
             PrivateKeyInfo::from_der(&bytes)
-                .map_err(|e| FromBytesError::Parsing(format!("Failed to decode DER: {}", e)))?
-        ).map_err(|e| FromBytesError::Parsing(format!("Failed to read private key from decoded DER: {}", e)))
+                .map_err(|e| FromBytesError::Parsing(format!("Failed to decode DER: {}", e)))?,
+        )
+        .map_err(|e| {
+            FromBytesError::Parsing(format!(
+                "Failed to read private key from decoded DER: {}",
+                e
+            ))
+        })
     }
 }

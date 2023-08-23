@@ -6,7 +6,11 @@ use std::{
 
 use clap::{Parser, Subcommand};
 
-use sendy_framework::{Context, model::crypto::PrivateKeychain, rsa::{self, pkcs1v15::DecryptingKey}, SocketConfig};
+use sendy_framework::{
+    model::crypto::PrivateKeychain,
+    rsa::{self, pkcs1v15::DecryptingKey},
+    Context, SocketConfig,
+};
 
 #[derive(Parser)]
 #[command(name = "sendy")]
@@ -31,10 +35,7 @@ pub enum CliCommand {
         #[arg(default_value_t=RsaKeyWidth::Large)]
         bits: RsaKeyWidth,
     },
-    #[command(
-        about = "",
-        name = "launch"
-    )]
+    #[command(about = "", name = "launch")]
     Run {
         #[arg(
             index = 2,
@@ -97,7 +98,7 @@ async fn main() {
 
     let keystore = match args.keystore {
         KeyStore::PlainFile => &secret::DerFileStore as &dyn secret::SecretStore,
-        #[cfg(target_os="linux")]
+        #[cfg(target_os = "linux")]
         KeyStore::SecretService => &secret::SecretServiceStore as &dyn secret::SecretStore,
     };
 
@@ -111,7 +112,11 @@ async fn main() {
                 .store(&PrivateKeychain::new(signature.into(), encrypt))
                 .await;
         }
-        CliCommand::Run { username, publicip, ports } => {
+        CliCommand::Run {
+            username,
+            publicip,
+            ports,
+        } => {
             let keychain = match keystore.read().await {
                 Some(kc) => kc,
                 None => {
@@ -126,8 +131,7 @@ async fn main() {
                 }
             };
 
-            let ctx =
-                Context::new(keychain, SocketConfig::default(), "USER".to_owned());
+            let ctx = Context::new(keychain, SocketConfig::default(), "USER".to_owned());
 
             for port in ports {
                 if let Err(e) = ctx.listen(port).await {

@@ -18,11 +18,9 @@ use tokio::sync::{
 };
 
 use crate::{
-    net::{
-        sock::{
-            packet::{PacketHeader, BLOCK_SIZE, HEADER_SZ},
-            PacketKind,
-        },
+    net::sock::{
+        packet::{PacketHeader, BLOCK_SIZE, HEADER_SZ},
+        PacketKind,
     },
     ser::{FromBytes, FromBytesError},
 };
@@ -276,13 +274,12 @@ impl ReliableSocket {
                     return None;
                 }
 
-                self.new_reassemble_buffer(&addr, header.id, header.kind).await;
+                self.new_reassemble_buffer(&addr, header.id, header.kind)
+                    .await;
 
                 0
-            },
-            PacketKind::Ack |
-                PacketKind::Conn |
-                PacketKind::Transfer => header.id.blockid,
+            }
+            PacketKind::Ack | PacketKind::Conn | PacketKind::Transfer => header.id.blockid,
         };
 
         let messages = self.recv.messages.read().await;
@@ -370,13 +367,15 @@ impl ReliableSocket {
                         }
                     }
                 }
-                _ => return Some(FinishedMessage {
-                    permit: finished.permit,
-                    from: finished.from,
-                    kind: finished.kind,
-                    id: finished.msg_id,
-                    payload,
-                })
+                _ => {
+                    return Some(FinishedMessage {
+                        permit: finished.permit,
+                        from: finished.from,
+                        kind: finished.kind,
+                        id: finished.msg_id,
+                        payload,
+                    })
+                }
             }
         }
 

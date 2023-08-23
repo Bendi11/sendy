@@ -16,14 +16,14 @@ use tokio::{
     sync::{oneshot, Notify, Semaphore},
 };
 
-use crate::ser::{FromBytes, ToBytes, ByteWriter};
+use crate::ser::{ByteWriter, FromBytes, ToBytes};
 
 use super::{
     packet::{
         PacketHeader, PacketId, BLOCKID_OFFSET, BLOCK_SIZE, CHECKSUM_OFFSET, HEADER_SZ,
         MAX_SAFE_UDP_PAYLOAD,
     },
-    PacketKind, ReliableSocketTransmitter, ReliableSocket, SocketConfig,
+    PacketKind, ReliableSocket, ReliableSocketTransmitter, SocketConfig,
 };
 
 /// Sensitivity to the RTT measurement to new changes in the response time in 10ths of a ms
@@ -82,8 +82,7 @@ impl ReliableSocket {
     ) -> std::io::Result<impl Future<Output = Bytes>> {
         let msgid = conn.next_message_id();
         let recv = self.wait_response(conn.remote.ip(), msgid);
-        self.send_with_id(conn, msgid, kind, req)
-            .await?;
+        self.send_with_id(conn, msgid, kind, req).await?;
 
         Ok(async {
             match recv.await {

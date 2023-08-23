@@ -2,9 +2,7 @@ use std::{fmt, num::NonZeroU8};
 
 use bytes::BufMut;
 
-use crate::{
-    ser::{FromBytes, FromBytesError, ToBytes, ByteWriter, ToBytesError},
-};
+use crate::ser::{ByteWriter, FromBytes, FromBytesError, ToBytes, ToBytesError};
 
 /// 'minimum maximum reassembly buffer size' guaranteed to be deliverable, minus IP and UDP headers
 pub(crate) const MAX_SAFE_UDP_PAYLOAD: usize = 500;
@@ -77,8 +75,7 @@ impl ToBytes for PacketId {
     }
 
     fn size_hint(&self) -> usize {
-        self.msgid.get().size_hint() +
-        self.blockid.size_hint()
+        self.msgid.get().size_hint() + self.blockid.size_hint()
     }
 }
 
@@ -132,13 +129,18 @@ impl FromBytes for PacketKind {
             1 => Self::Ack,
             2 => Self::Transfer,
             3 => Self::Respond,
-            _ => return Err(FromBytesError::Parsing(format!("Invalid packet kind tag {:X}", value))),
+            _ => {
+                return Err(FromBytesError::Parsing(format!(
+                    "Invalid packet kind tag {:X}",
+                    value
+                )))
+            }
         })
     }
 }
 
 impl ToBytes for PacketKind {
-    fn encode<W: BufMut>(&self, buf: &mut W) -> Result<(), ToBytesError>  {
+    fn encode<W: BufMut>(&self, buf: &mut W) -> Result<(), ToBytesError> {
         let v = match self {
             Self::Conn => 0,
             Self::Ack => 1,

@@ -1,6 +1,9 @@
 //! Module defining traits for how rust types get serialized to bytes when transmitted
 
-use std::{net::{IpAddr, Ipv4Addr, Ipv6Addr}, borrow::Cow};
+use std::{
+    borrow::Cow,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+};
 
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{NaiveDateTime, Utc};
@@ -32,7 +35,9 @@ pub trait ToBytes: Sized {
     fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError>;
 
     /// Provide the encoded size in bytes of this value
-    fn size_hint(&self) -> usize { 0 }
+    fn size_hint(&self) -> usize {
+        0
+    }
 
     /// Write the full representation of [self] to a vec of bytes
     fn encode_to_vec(&self) -> Vec<u8> {
@@ -54,7 +59,7 @@ pub trait FromBytes: Sized {
         let mut reader = untrusted::Reader::new(untrusted::Input::from(slice));
         Self::decode(&mut reader)
     }
-    
+
     /// Parse an instance of `Self` and return a tuple of the bytes that were parsed and the
     /// instance
     fn partial_decode_from_slice(slice: &[u8]) -> Result<(&[u8], Self), FromBytesError> {
@@ -64,10 +69,9 @@ pub trait FromBytes: Sized {
     }
 }
 
-
 pub type LenType = u32;
 
-/// Format: 
+/// Format:
 /// 4 byte length
 /// Variable length data
 impl<T: ToBytes> ToBytes for Vec<T> {
@@ -81,10 +85,7 @@ impl<T: ToBytes> ToBytes for Vec<T> {
     }
 
     fn size_hint(&self) -> usize {
-        let elements: usize = self
-            .iter()
-            .map(|elem| elem.size_hint())
-            .sum();
+        let elements: usize = self.iter().map(|elem| elem.size_hint()).sum();
 
         elements + std::mem::size_of::<LenType>()
     }
@@ -93,7 +94,9 @@ impl<T: ToBytes> ToBytes for Vec<T> {
 impl<T: FromBytes> FromBytes for Vec<T> {
     fn decode(buf: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let len: LenType = LenType::decode(buf)?;
-        (0..len).map(|_| T::decode(buf)).collect::<Result<Self, _>>()
+        (0..len)
+            .map(|_| T::decode(buf))
+            .collect::<Result<Self, _>>()
     }
 }
 
@@ -130,8 +133,12 @@ integral_from_to_bytes! {i32: get_i32_le, put_i32_le}
 integral_from_to_bytes! {i64: get_i64_le, put_i64_le}
 
 impl ToBytes for () {
-    fn encode<W: BufMut>(&self, _buf: &mut W) -> Result<(), ToBytesError> { Ok(()) }
-    fn size_hint(&self) -> usize { 0 }
+    fn encode<W: BufMut>(&self, _buf: &mut W) -> Result<(), ToBytesError> {
+        Ok(())
+    }
+    fn size_hint(&self) -> usize {
+        0
+    }
 }
 
 /// Errors that may occur when reading a value from a byte buffer
@@ -176,12 +183,8 @@ impl ToBytes for IpAddr {
     fn encode<B: ByteWriter>(&self, buf: &mut B) -> Result<(), ToBytesError> {
         ipaddr_tag(self).encode(buf)?;
         match self {
-            Self::V4(v4addr) => {
-                v4addr.encode(buf)
-            }
-            Self::V6(v6addr) => {
-                v6addr.encode(buf)
-            }
+            Self::V4(v4addr) => v4addr.encode(buf),
+            Self::V6(v6addr) => v6addr.encode(buf),
         }
     }
 
@@ -219,7 +222,9 @@ impl ToBytes for Ipv4Addr {
         Ok(())
     }
 
-    fn size_hint(&self) -> usize { 4 }
+    fn size_hint(&self) -> usize {
+        4
+    }
 }
 
 impl FromBytes for Ipv4Addr {
@@ -241,7 +246,9 @@ impl ToBytes for Ipv6Addr {
         Ok(())
     }
 
-    fn size_hint(&self) -> usize { 16 }
+    fn size_hint(&self) -> usize {
+        16
+    }
 }
 
 impl FromBytes for Ipv6Addr {
@@ -264,7 +271,9 @@ impl ToBytes for String {
         Ok(())
     }
 
-    fn size_hint(&self) -> usize { self.as_bytes().len() + (self.len() as u32).size_hint() }
+    fn size_hint(&self) -> usize {
+        self.as_bytes().len() + (self.len() as u32).size_hint()
+    }
 }
 
 impl FromBytes for String {
@@ -281,7 +290,9 @@ impl<const N: usize> ToBytes for [u8; N] {
         Ok(())
     }
 
-    fn size_hint(&self) -> usize { N }
+    fn size_hint(&self) -> usize {
+        N
+    }
 }
 
 impl<const N: usize> FromBytes for [u8; N] {
@@ -302,7 +313,9 @@ impl ToBytes for chrono::DateTime<Utc> {
         self.timestamp().encode(buf)
     }
 
-    fn size_hint(&self) -> usize { self.timestamp().size_hint() }
+    fn size_hint(&self) -> usize {
+        self.timestamp().size_hint()
+    }
 }
 
 impl FromBytes for chrono::DateTime<Utc> {
