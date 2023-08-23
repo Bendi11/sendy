@@ -10,10 +10,10 @@ pub(crate) const MAX_SAFE_UDP_PAYLOAD: usize = 500;
 /// The encoded size of a [PacketHeader] in bytes
 pub(crate) const HEADER_SZ: usize = 8;
 
-pub(in crate::net::sock) const CHECKSUM_OFFSET: usize = 4;
-pub(in crate::net::sock) const BLOCKID_OFFSET: usize = 2;
+pub(in crate::sock) const CHECKSUM_OFFSET: usize = 4;
+pub(in crate::sock) const BLOCKID_OFFSET: usize = 2;
 #[allow(dead_code)]
-pub(in crate::net::sock) const MSGID_OFFSET: usize = 1;
+pub(in crate::sock) const MSGID_OFFSET: usize = 1;
 
 /// The space available to a single packet for payload, after IP, UDP, and Sendy headers
 pub(crate) const BLOCK_SIZE: usize = MAX_SAFE_UDP_PAYLOAD - HEADER_SZ;

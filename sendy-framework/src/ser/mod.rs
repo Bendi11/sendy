@@ -1,4 +1,10 @@
-//! Module defining traits for how rust types get serialized to bytes when transmitted
+///! Module defining traits for how rust types get serialized to bytes when transmitted, and how
+///! they are read from byte buffers when receieved.
+///!
+///! The `ByteWriter` trait is implemented by the
+///! [MessageSplitter](crate::net::sock::tx::MessageSplitter) type to efficiently chop an encoded
+///! message into multiple packets that each have a prefixed header, without making an extra copy of
+///! the encoded data
 
 use std::{
     borrow::Cow,
@@ -8,6 +14,13 @@ use std::{
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{NaiveDateTime, Utc};
 
+mod util;
+pub use util::*;
+
+
+// Extension trait for [BufMut], allowing custom behavior when a partial writes are required for
+/// e.g. message signatures - for certain types partial writes with read back can be more
+/// efficiently implemented than allocating a [Vec<u8>] and copying it to the writer later
 pub trait ByteWriter: BufMut + Sized {
     /// Write the byte representation of the given value to `self`, and return the bytes that were
     /// written, used to sign the encoded representation of `val`
@@ -31,15 +44,17 @@ impl ByteWriter for BytesMut {}
 
 /// Trait to be implemented by all types that can be written to a byte buffer
 pub trait ToBytes: Sized {
-    /// Write the representation of this payload to a buffer of bytes
+    /// Write the representation of this payload to a buffer of bytes,
+    /// returning an error if the value is invalid and should not be transmitted / stored
     fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError>;
 
-    /// Provide the encoded size in bytes of this value
+    /// Provide the encoded size in bytes of this value, or 0 if the size cannot be efficiently
+    /// known before encoding
     fn size_hint(&self) -> usize {
         0
     }
 
-    /// Write the full representation of [self] to a vec of bytes
+    /// A helper method to write the representation of [self] to a vec of bytes
     fn encode_to_vec(&self) -> Vec<u8> {
         let mut buf = Vec::<u8>::with_capacity(self.size_hint());
         self.encode(&mut buf);
@@ -48,7 +63,7 @@ pub trait ToBytes: Sized {
 }
 
 /// Trait implemented by all types that may be parsed from a byte buffer that is sent in a message
-/// payload
+/// payload. Allows borrowing data from the [Reader](untrusted::Reader) if required.
 pub trait FromBytes<'a>: Sized + 'a {
     /// Read bytes the given buffer (multi-byte words should be little endian) to create an
     /// instance of `Self`
@@ -62,7 +77,7 @@ pub trait FromBytes<'a>: Sized + 'a {
     }
 
     /// Parse an instance of `Self` and return a tuple of the bytes that were parsed and the
-    /// instance
+    /// instance, useful to verify signatures when reading
     fn partial_decode_from_slice(slice: &'a [u8]) -> Result<(&[u8], Self), FromBytesError> {
         let mut reader = untrusted::Reader::new(untrusted::Input::from(slice));
         let (read, this) = reader.read_partial(Self::decode)?;
@@ -139,6 +154,7 @@ impl From<untrusted::EndOfInput> for FromBytesError {
 const IPVERSION_MARKER_V4: u8 = 4;
 const IPVERSION_MARKER_V6: u8 = 6;
 
+/// Get the single byte tag value that is used for an IP address when encoded to a byte buffer
 const fn ipaddr_tag(addr: &IpAddr) -> u8 {
     match addr {
         IpAddr::V4(_) => IPVERSION_MARKER_V4,
@@ -285,6 +301,18 @@ impl<'a, T: FromBytes<'a>> FromBytes<'a> for Vec<T> {
     }
 }
 
+impl ToBytes for &[u8] {
+    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
+        (self.len() as LenType).encode(buf)?;
+        buf.put_slice(self);
+        Ok(())
+    }
+
+    fn size_hint(&self) -> usize {
+        (self.len() as LenType).size_hint() +
+        self.len()
+    }
+}
 impl<'a> FromBytes<'a> for &'a [u8] {
     fn decode(reader: &mut untrusted::Reader<'a>) -> Result<Self, FromBytesError> {
         let len = <LenType as FromBytes>::decode(reader)?; 

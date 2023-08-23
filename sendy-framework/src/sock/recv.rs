@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut, BufMut};
 use dashmap::DashMap;
 use hibitset::AtomicBitSet;
 use parking_lot::Mutex;
@@ -18,7 +18,7 @@ use tokio::sync::{
 };
 
 use crate::{
-    net::sock::{
+    sock::{
         packet::{PacketHeader, BLOCK_SIZE, HEADER_SZ},
         PacketKind,
     },

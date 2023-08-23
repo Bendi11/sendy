@@ -1,3 +1,9 @@
+//! A reliability layer over UDP that allows messages to be sent over an unreliable transport
+//! and be received with content validation using CRC32 checksums
+//!
+//! The [ReliableSocket] differs from TCP in that it receives and transmits messages in fixed-size
+//! 'messages', instead of streaming bytes from the sender to the receiver.
+
 mod packet;
 mod recv;
 mod tx;
@@ -9,6 +15,7 @@ use std::{
 
 use dashmap::DashMap;
 pub(crate) use packet::PacketKind;
+pub(crate) use recv::FinishedMessage;
 use tokio::{net::UdpSocket, sync::Notify};
 
 use self::{packet::PacketId, recv::ReliableSocketRecv, tx::ReliableSocketCongestionControl};
@@ -18,13 +25,15 @@ use self::{packet::PacketId, recv::ReliableSocketRecv, tx::ReliableSocketCongest
 pub struct SocketConfig {
     /// Maximum bytes of memory to use when buffering received packets
     pub max_recv_mem: usize,
-    /// Transmission window size in packets to start at
+    /// Transmission window size in packets to start at for new connections
     pub transmission_window_sz: u8,
     /// Extra time beyond the estimated round trip time to wait for an ACK packet
+    /// before assuming that the packet has been dropped and re-transmitting it.
     pub extra_wait_for_ack_ms: usize,
 }
 
-/// State maintained for each connection to a remote peer, created by a [ReliableSocket]
+/// State maintained for each connection to a remote peer, created by a [ReliableSocket].
+/// Maintains all needed data for congestion control
 #[derive(Debug)]
 pub(crate) struct ReliableSocketTransmitter {
     /// Address and port of the remote peer
@@ -36,8 +45,8 @@ pub(crate) struct ReliableSocketTransmitter {
 }
 
 /// Wrapper over a UDP socket that is capable of UDP hole punching to connect to another peer, with
-/// a minimal reliability layer that guarantees messages are received in the order they are
-/// transmitted (unless they dropped for another reason - e.g. the message was too large to accomodate)
+/// a minimal reliability layer that guarantees messages arrive in full while limiting the amount of
+/// memory that can be utilized for the receive buffer - see [SocketConfig]
 #[derive(Debug)]
 pub(crate) struct ReliableSocket {
     /// Map of ports to sockets that have been bound to them
@@ -59,7 +68,7 @@ impl ReliableSocketTransmitter {
 }
 
 impl ReliableSocket {
-    /// Create a new socket that is not connected to any remote peer
+    /// Create a new socket manager that is not listening for any packets
     pub fn new(cfg: SocketConfig) -> Self {
         let recv = ReliableSocketRecv::new(&cfg);
 
@@ -71,7 +80,9 @@ impl ReliableSocket {
         }
     }
 
-    /// Add a listener for packets on the given port
+    /// Add a listener for packets on the given port.
+    /// Make sure that [ReliableSocket::recv] is being called in a loop to actually handle packets
+    /// that arrive at the given port.
     pub async fn new_binding(&self, port: u16) -> Result<(), std::io::Error> {
         if !self.socks.contains_key(&port) {
             self.socks.insert(
@@ -84,7 +95,8 @@ impl ReliableSocket {
     }
 
     /// Create flow control state for a single remote peer, adding a listener for the port that the
-    /// peer is located on. Performs no actual network operations.
+    /// peer is located on. Performs no actual network operations besides creating a new UDP
+    /// listener on the peer's port.
     pub async fn create_transmitter(
         &self,
         addr: SocketAddr,
