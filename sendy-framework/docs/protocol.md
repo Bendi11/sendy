@@ -33,20 +33,49 @@ A certificate must contain:
 
 ## Capabilities
 A node must advertise in its certificate wether it can provide the following services:
- * Relay and store [posts](#Post)
+ * Relay and store [resources](#Resource)
  * Public IP address and port notification for NAT traversal
- * Peer introduction allowing other UDP tunnel connections to be made
 
 
 # Channel
-A channel is a container of [post](#Post) [resources](#Resource)
+A channel is both a [resource](#Resource) and a 'container' of [post](#Post) resources in that all
+posts must have an associated channel that can be used to decrypt the post's contents.
 
+Channel seeds are made up of a randomly generated 32 byte seed and a 32 byte salt, and public authentication key used
+to sign updates to the channel resource.
+The seed is hashed to produce a 32-byte channel identifier, and the seed and salt are passed through a KDF to generate a
+symmetric AEAD key.
+
+Channels have two 'levels' of access: possessing the channel seed allows a node to decrypt all posts made in the channel.
+In addition, a single authentication keypair is generated when the channel is created allowing administrative control over the channel.
+
+A channel resource must contain:
+ - Channel name (at most 128 bytes of UTF-8 encoded text)
+ - Channel administrative public key
+
+## Channel Invites
+Channel invites are another kind of [resource](#Resource) that shares a channel seed with another peer,
+allowing that peer to decrypt posts sent in the channel.
+The channel seed is encrypted using the invited peer's public encryption key, and signed by the channel's authentication admin key.
+
+A channel invite resource must contain:
+ - Public authentication key of the peer that is being invited
+ - ID of the channel that the peer is being invited to
+ - Timestamp of the invitation's creation
+ - Encrypted:
+   - Channel seed
 
 # Resource
-Resources are any data that should be persisted and/or known by the network.
+Resources are any data that should be persisted by the network.
+Resources must all contain:
+ - A timestamp marking resource last-update time
+ - A unique identifier generated from the resources' contents
+
 These include
  - [Session Certificates](#Session Certificate)
  - [Posts](#Post)
+ - [Channels](#Channel)
+ - [Channel Invites](#Channel Invites)
 
 Resources must be identifiable by a unique ID that is derived from the resource's contents.
 If a self-describing resource ID is required, the resource ID should be preceded by a single byte tag identifying the type of resource.

@@ -28,3 +28,8 @@ thiserror = "1.0"
 hibitset = { version = "0.6", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 base64 = "0.21"
+
+flatbuffers = "23.5"
+
+[build-dependencies]
+flatc-rust = "0.2"
