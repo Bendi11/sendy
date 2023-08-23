@@ -1,11 +1,12 @@
 mod net;
 mod ser;
-mod crypto;
+
+pub mod model;
 
 
 use std::sync::Arc;
 
-use crypto::PrivateKeychain;
+use model::crypto::PrivateKeychain;
 use net::sock::{ReliableSocket, SocketConfig};
 pub use ser::{FromBytes, FromBytesError, ToBytes};
 
