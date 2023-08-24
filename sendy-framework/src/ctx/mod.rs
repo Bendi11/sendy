@@ -1,6 +1,6 @@
 use std::{sync::Arc, net::SocketAddr};
 
-use crate::SocketConfig;
+use crate::{SocketConfig, ToBytes, FromBytes};
 use crate::model::crypto::PrivateKeychain;
 use crate::sock::ReliableSocket;
 
@@ -14,6 +14,27 @@ pub struct Context {
     socks: ReliableSocket,
     /// Keychain used to sign and encrypt messages
     keychain: PrivateKeychain,
+}
+
+/// Resource identifier tag
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ResourceKind {
+    Certificate,
+}
+
+/// Resources are any data meant to be persisted on the sendy network, they must be signed by an
+/// author and identifiable by a unique ID
+pub trait Resource<'a>: ToBytes + FromBytes<'a> {
+    const RESOURCE_KIND: ResourceKind;
+    
+    type Signature: ToBytes + FromBytes<'a>;
+
+    fn validate(&self, buf: &'a [u8], signature: Self::Signature) -> bool;
+    
+    fn sign(&self, ctx: &Context);
+
+    fn signature(&self) -> &Self::Signature;
 }
 
 impl Context {

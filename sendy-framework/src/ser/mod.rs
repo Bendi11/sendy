@@ -34,7 +34,7 @@ pub trait ByteWriter: BufMut + Sized {
 impl ByteWriter for Vec<u8> {
     fn write_partial<'a, T: ToBytes>(&'a mut self, val: &T) -> Cow<'a, [u8]> {
         let start_idx = self.len();
-        val.encode(self);
+        val.encode(self).unwrap();
         Cow::Borrowed(&self[start_idx..])
     }
 }
