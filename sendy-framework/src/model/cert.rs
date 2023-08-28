@@ -3,9 +3,10 @@
 use std::net::IpAddr;
 
 use bitflags::bitflags;
-use rsa::pkcs1v15::Signature;
+use chrono::{DateTime, Duration, Utc};
+use rsa::{pkcs1v15::Signature, signature::SignatureEncoding};
 
-use crate::{FromBytes, ToBytes, ser::{ByteWriter, ToBytesError}};
+use crate::{FromBytes, ToBytes, ser::{ByteWriter, ToBytesError}, FromBytesError};
 
 use super::crypto::PublicKeychain;
 
@@ -22,11 +23,15 @@ pub struct UnsignedPeerCertificate {
     pub username: String,
     /// IP address of this peer
     pub sockaddr: IpAddr,
+    /// Time that this certificate will be valid from
+    pub timestamp: DateTime<Utc>,
+    /// How long past `timestamp` this certificate will still be valid
+    pub ttl: Duration,
 }
 
 pub struct PeerCertificate {
-    cert: UnsignedPeerCertificate,
-    signature: Signature,
+    pub(crate) cert: UnsignedPeerCertificate,
+    pub(crate) signature: Signature,
 }
 
 bitflags! {
@@ -44,6 +49,8 @@ impl ToBytes for UnsignedPeerCertificate {
         self.capabilities.encode(buf)?;
         self.username.encode(buf)?;
         self.sockaddr.encode(buf)?;
+        self.timestamp.encode(buf)?;
+        self.ttl.encode(buf)?;
 
         Ok(())
     }
@@ -52,21 +59,27 @@ impl ToBytes for UnsignedPeerCertificate {
         self.keychain.size_hint() +
         self.capabilities.size_hint() +
         self.username.size_hint() +
-        self.sockaddr.size_hint()
+        self.sockaddr.size_hint() +
+        self.timestamp.size_hint() +
+        self.ttl.size_hint()
     }
 }
 impl FromBytes<'_> for UnsignedPeerCertificate {
-    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, crate::FromBytesError> {
+    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let keychain = PublicKeychain::decode(reader)?;
         let capabilities = PeerCapabilities::decode(reader)?;
         let username = String::decode(reader)?;
         let sockaddr = IpAddr::decode(reader)?;
+        let timestamp = DateTime::<Utc>::decode(reader)?;
+        let ttl = Duration::decode(reader)?;
 
         Ok(Self {
             keychain,
             capabilities,
             username,
             sockaddr,
+            timestamp,
+            ttl,
         })
     }
 }
@@ -77,8 +90,25 @@ impl ToBytes for PeerCapabilities {
     fn size_hint(&self) -> usize { self.bits().size_hint() }
 }
 impl FromBytes<'_> for PeerCapabilities {
-    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, crate::FromBytesError> {
+    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let mask = u16::decode(reader)?;
         Ok(Self::from_bits_truncate(mask))
+    }
+}
+
+impl ToBytes for Signature {
+    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
+        self.to_bytes().as_ref().encode(buf)
+    }
+
+    fn size_hint(&self) -> usize {
+        self.encoded_len()
+    }
+}
+impl<'a> FromBytes<'a> for Signature {
+    fn decode(reader: &mut untrusted::Reader<'a>) -> Result<Self, FromBytesError> {
+        let buf = <&[u8]>::decode(reader)?;
+        Self::try_from(buf)
+            .map_err(|e| FromBytesError::Parsing(format!("Failed to parse encoded signature: {}", e)))
     }
 }

@@ -15,6 +15,7 @@ use bytes::{Buf, BufMut, BytesMut};
 use chrono::{NaiveDateTime, Utc};
 
 mod util;
+mod time;
 pub use util::*;
 
 
@@ -68,6 +69,13 @@ pub trait FromBytes<'a>: Sized + 'a {
     /// Read bytes the given buffer (multi-byte words should be little endian) to create an
     /// instance of `Self`
     fn decode(reader: &mut untrusted::Reader<'a>) -> Result<Self, FromBytesError>;
+    
+    /// Parse an instance of `Self` from the given [untrusted::Reader], returning the read bytes as
+    /// an [untrusted::Input] and the parsed value
+    fn partial_decode(reader: &mut untrusted::Reader<'a>) -> Result<(untrusted::Input<'a>, Self), FromBytesError> {
+        let (read, this) = reader.read_partial(Self::decode)?;
+        Ok((read, this))
+    }
 
     /// Helper function to read an instance of `Self` without needing to create [untrusted] types
     fn decode_from_slice(slice: &'a [u8]) -> Result<Self, FromBytesError>
@@ -80,8 +88,8 @@ pub trait FromBytes<'a>: Sized + 'a {
     /// instance, useful to verify signatures when reading
     fn partial_decode_from_slice(slice: &'a [u8]) -> Result<(&[u8], Self), FromBytesError> {
         let mut reader = untrusted::Reader::new(untrusted::Input::from(slice));
-        let (read, this) = reader.read_partial(Self::decode)?;
-        Ok((read.as_slice_less_safe(), this))
+        Self::partial_decode(&mut reader)
+            .map(|(buf, v)| (buf.as_slice_less_safe(), v)) 
     }
 }
 
@@ -344,29 +352,4 @@ impl<const N: usize> FromBytes<'_> for [u8; N] {
     }
 }
 
-/// Format:
-/// UNIX timestamp - 8 bytes
-impl ToBytes for chrono::DateTime<Utc> {
-    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
-        self.timestamp().encode(buf)
-    }
 
-    fn size_hint(&self) -> usize {
-        self.timestamp().size_hint()
-    }
-}
-
-impl FromBytes<'_> for chrono::DateTime<Utc> {
-    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let ts = i64::decode(reader)?;
-        let naive = match NaiveDateTime::from_timestamp_millis(ts) {
-            Some(dt) => dt,
-            None => {
-                return Err(FromBytesError::Parsing(format!(
-                    "Failed to read UTC timestamp: out of range"
-                )))
-            }
-        };
-        Ok(Self::from_utc(naive, Utc))
-    }
-}

@@ -1,5 +1,7 @@
 use std::{sync::Arc, net::SocketAddr};
 
+use sqlx::SqlitePool;
+
 use crate::{SocketConfig, ToBytes, FromBytes};
 use crate::model::crypto::PrivateKeychain;
 use crate::sock::ReliableSocket;
@@ -14,6 +16,8 @@ pub struct Context {
     socks: ReliableSocket,
     /// Keychain used to sign and encrypt messages
     keychain: PrivateKeychain,
+    /// Connection to an sqlite database used to store all resources
+    db: SqlitePool,
 }
 
 /// Resource identifier tag
@@ -39,9 +43,15 @@ pub trait Resource<'a>: ToBytes + FromBytes<'a> {
 
 impl Context {
     /// Create a new `Context` with the given keychain for authentication and encryption
-    pub fn new(keychain: PrivateKeychain, cfg: SocketConfig, username: String) -> Arc<Self> {
+    pub async fn new(
+        keychain: PrivateKeychain,
+        cfg: SocketConfig,
+        username: String,
+        db: SqlitePool,
+    ) -> Arc<Self> {
         let socks = ReliableSocket::new(cfg);
-        Arc::new(Self { socks, keychain })
+
+        Arc::new(Self { socks, keychain, db })
     }
 
     /// Listen for incoming connections on the given port
