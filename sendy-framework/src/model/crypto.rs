@@ -1,3 +1,4 @@
+use digest::{Digest};
 ///! Cryptographic data that facilitates authentication and encryption between peers and across
 ///! channels
 
@@ -13,6 +14,9 @@ use crate::{
     ser::{ByteWriter, ToBytesError},
     FromBytes, FromBytesError, ToBytes,
 };
+
+/// Length of an SHA256 hash in bytes
+pub const SHA256_HASH_LEN: usize = 32;
 
 /// Public authentication and encryption keys
 #[derive(Clone, Debug)]
@@ -39,6 +43,18 @@ impl PrivateKeychain {
             authentication,
             decryption,
         }
+    }
+}
+
+impl PublicKeychain {
+    /// Calculate the fingerprint of the public authentication key by applying the sha256 hash
+    /// function to it 
+    pub fn fingerprint(&self) -> [u8 ; SHA256_HASH_LEN] {
+        let mut hash = Sha256::new();
+
+        hash.update(self.verification.encode_to_vec());
+
+        hash.finalize().into()
     }
 }
 

@@ -15,34 +15,15 @@ pub struct Context {
     /// Manager for all lower-level UDP operations
     socks: ReliableSocket,
     /// Keychain used to sign and encrypt messages
-    keychain: PrivateKeychain,
+    pub(crate) keychain: PrivateKeychain,
     /// Connection to an sqlite database used to store all resources
-    db: SqlitePool,
+    pub(crate) db: SqlitePool,
 }
 
-/// Resource identifier tag
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ResourceKind {
-    Certificate,
-}
-
-/// Resources are any data meant to be persisted on the sendy network, they must be signed by an
-/// author and identifiable by a unique ID
-pub trait Resource<'a>: ToBytes + FromBytes<'a> {
-    const RESOURCE_KIND: ResourceKind;
-    
-    type Signature: ToBytes + FromBytes<'a>;
-
-    fn validate(&self, buf: &'a [u8], signature: Self::Signature) -> bool;
-    
-    fn sign(&self, ctx: &Context);
-
-    fn signature(&self) -> &Self::Signature;
-}
 
 impl Context {
-    /// Create a new `Context` with the given keychain for authentication and encryption
+    /// Create a new `Context` with the given keychain for authentication and encryption,
+    /// configuration options, and database connection pool for resource storage
     pub async fn new(
         keychain: PrivateKeychain,
         cfg: SocketConfig,
@@ -50,6 +31,10 @@ impl Context {
         db: SqlitePool,
     ) -> Arc<Self> {
         let socks = ReliableSocket::new(cfg);
+
+        if let Err(e) = sqlx::migrate!("../migrations").run(&db).await {
+            log::error!("Failed to apply database migrations: {}", e);
+        }
 
         Arc::new(Self { socks, keychain, db })
     }

@@ -9,6 +9,7 @@ pub(crate) mod sock;
 pub(crate) mod ser;
 pub(crate) mod msg;
 pub(crate) mod ctx;
+pub(crate) mod res;
 
 pub mod model;
 pub use sock::SocketConfig;

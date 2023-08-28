@@ -140,6 +140,9 @@ pub enum FromBytesError {
     /// Error originating from the [untrusted] byte readers
     #[error("Unexpected end of input")]
     EndOfInput(untrusted::EndOfInput),
+    /// There were extra bytes left at the end of the buffer
+    #[error("Extra bytes found at end of buffer")]
+    ExtraBytes,
     /// Parsing from messages should not be recoverable, so error messages can be stored as strings
     /// to be displayed on the frontend
     #[error("{0}")]

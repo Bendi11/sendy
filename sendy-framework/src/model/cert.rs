@@ -42,7 +42,6 @@ bitflags! {
     }
 }
 
-
 impl ToBytes for UnsignedPeerCertificate {
     fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
         self.keychain.encode(buf)?;
@@ -83,7 +82,25 @@ impl FromBytes<'_> for UnsignedPeerCertificate {
         })
     }
 }
+impl ToBytes for PeerCertificate {
+    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
+        self.cert.encode(buf)?;
+        self.signature.encode(buf)?;
 
+        Ok(())
+    }
+
+    fn size_hint(&self) -> usize {
+        self.cert.size_hint() + self.signature.size_hint()
+    }
+}
+impl FromBytes<'_> for PeerCertificate {
+    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let cert = UnsignedPeerCertificate::decode(reader)?;
+        let signature = Signature::decode(reader)?;
+        Ok(Self { cert, signature })
+    }
+}
 
 impl ToBytes for PeerCapabilities {
     fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> { self.bits().encode(buf) }

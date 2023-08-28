@@ -1686,6 +1686,7 @@ name = "sendy-framework"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "async-trait",
  "base64",
  "bitflags 2.4.0",
  "bytes",
