@@ -6,7 +6,7 @@ use bitflags::bitflags;
 use chrono::{DateTime, Duration, Utc};
 use rsa::pkcs1v15::Signature;
 
-use crate::{FromBytes, ToBytes, ByteWriter, ToBytesError, FromBytesError};
+use crate::{ByteWriter, FromBytes, FromBytesError, ToBytes, ToBytesError};
 
 use super::crypto::PublicKeychain;
 
@@ -17,7 +17,7 @@ pub struct UnsignedPeerCertificate {
     /// The public keys used to verify the authenticity of messages sent by this peer and encrypt
     /// messages meant for this peer
     pub keychain: PublicKeychain,
-    /// Supported extensions to the protocol 
+    /// Supported extensions to the protocol
     pub capabilities: PeerCapabilities,
     /// Self-assigned username of this peer
     pub username: String,
@@ -39,13 +39,17 @@ bitflags! {
     /// A set of all capabilities supported by a peer on the network
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct PeerCapabilities: u16 {
-        
+
     }
 }
 
 impl ToBytes for PeerCapabilities {
-    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> { self.bits().encode(buf) }
-    fn size_hint(&self) -> usize { self.bits().size_hint() }
+    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
+        self.bits().encode(buf)
+    }
+    fn size_hint(&self) -> usize {
+        self.bits().size_hint()
+    }
 }
 impl FromBytes<'_> for PeerCapabilities {
     fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
@@ -53,5 +57,3 @@ impl FromBytes<'_> for PeerCapabilities {
         Ok(Self::from_bits_truncate(mask))
     }
 }
-
-

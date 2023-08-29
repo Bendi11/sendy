@@ -1,7 +1,6 @@
-use crate::{sock::PacketKind, ToBytes, FromBytes, model::cert::PeerCertificate};
+use crate::{model::cert::PeerCertificate, sock::PacketKind, FromBytes, ToBytes};
 
 use super::Message;
-
 
 /// Conn message used to establish an authenticated connection with another peer
 #[derive(Debug, ToBytes, FromBytes)]

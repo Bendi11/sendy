@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use bytes::{Bytes, BytesMut, BufMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
 use hibitset::AtomicBitSet;
 use parking_lot::Mutex;
@@ -242,10 +242,10 @@ impl ReliableSocket {
         }
 
         let blockid = match header.kind {
-            PacketKind::RespondOk |
-                PacketKind::RespondErr |
-                PacketKind::Conn |
-                PacketKind::Advertise => {
+            PacketKind::RespondOk
+            | PacketKind::RespondErr
+            | PacketKind::Conn
+            | PacketKind::Advertise => {
                 // We already received the new message packet
                 if self
                     .recv

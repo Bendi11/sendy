@@ -5,22 +5,20 @@
 ///! [MessageSplitter](crate::net::sock::tx::MessageSplitter) type to efficiently chop an encoded
 ///! message into multiple packets that each have a prefixed header, without making an extra copy of
 ///! the encoded data
-
 use std::{
     borrow::Cow,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
-pub use untrusted::{self, Input, Reader, EndOfInput};
 pub use bytes::{self, Buf, BufMut, BytesMut};
+pub use untrusted::{self, EndOfInput, Input, Reader};
 
-#[cfg(feature = "chrono")]
-mod time;
 #[cfg(feature = "rsa")]
 mod rsa;
+#[cfg(feature = "chrono")]
+mod time;
 
-pub use derives::{ToBytes, FromBytes};
-
+pub use derives::{FromBytes, ToBytes};
 
 // Extension trait for [BufMut], allowing custom behavior when a partial writes are required for
 /// e.g. message signatures - for certain types partial writes with read back can be more
@@ -72,17 +70,21 @@ pub trait FromBytes<'a>: Sized + 'a {
     /// Read bytes the given buffer (multi-byte words should be little endian) to create an
     /// instance of `Self`
     fn decode(reader: &mut untrusted::Reader<'a>) -> Result<Self, FromBytesError>;
-    
+
     /// Parse an instance of `Self` from the given [untrusted::Reader], returning the read bytes as
     /// an [untrusted::Input] and the parsed value
-    fn partial_decode(reader: &mut untrusted::Reader<'a>) -> Result<(untrusted::Input<'a>, Self), FromBytesError> {
+    fn partial_decode(
+        reader: &mut untrusted::Reader<'a>,
+    ) -> Result<(untrusted::Input<'a>, Self), FromBytesError> {
         let (read, this) = reader.read_partial(Self::decode)?;
         Ok((read, this))
     }
 
     /// Helper function to read an instance of `Self` without needing to create [untrusted] types
     fn decode_from_slice(slice: &'a [u8]) -> Result<Self, FromBytesError>
-    where Self: 'a {
+    where
+        Self: 'a,
+    {
         let mut reader = untrusted::Reader::new(untrusted::Input::from(slice));
         Self::decode(&mut reader)
     }
@@ -91,16 +93,14 @@ pub trait FromBytes<'a>: Sized + 'a {
     /// instance, useful to verify signatures when reading
     fn partial_decode_from_slice(slice: &'a [u8]) -> Result<(&[u8], Self), FromBytesError> {
         let mut reader = untrusted::Reader::new(untrusted::Input::from(slice));
-        Self::partial_decode(&mut reader)
-            .map(|(buf, v)| (buf.as_slice_less_safe(), v)) 
+        Self::partial_decode(&mut reader).map(|(buf, v)| (buf.as_slice_less_safe(), v))
     }
-    
+
     /// Read an instance of `Self` from the given slice, with the additional requirement that no
     /// trailing bytes should be present in the input buffer even if parsing succeeded
     fn full_decode_from_slice(slice: &'a [u8]) -> Result<Self, FromBytesError> {
         let input = untrusted::Input::from(slice);
-        input
-            .read_all(FromBytesError::ExtraBytes, Self::decode)
+        input.read_all(FromBytesError::ExtraBytes, Self::decode)
     }
 }
 
@@ -331,18 +331,16 @@ impl ToBytes for &[u8] {
     }
 
     fn size_hint(&self) -> usize {
-        (self.len() as LenType).size_hint() +
-        self.len()
+        (self.len() as LenType).size_hint() + self.len()
     }
 }
 impl<'a> FromBytes<'a> for &'a [u8] {
     fn decode(reader: &mut untrusted::Reader<'a>) -> Result<Self, FromBytesError> {
-        let len = <LenType as FromBytes>::decode(reader)?; 
+        let len = <LenType as FromBytes>::decode(reader)?;
         let slice = reader.read_bytes(len as usize)?;
         Ok(slice.as_slice_less_safe())
     }
 }
-
 
 impl<const N: usize> ToBytes for [u8; N] {
     fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {

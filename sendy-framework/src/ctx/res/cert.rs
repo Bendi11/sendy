@@ -1,15 +1,18 @@
 use async_stream::try_stream;
 use async_trait::async_trait;
 use bytes::Bytes;
-use chrono::{Utc, DateTime};
+use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
 use rsa::pkcs1v15::Signature;
 use signature::Verifier;
-use sqlx::{Row, QueryBuilder, Sqlite};
+use sqlx::{QueryBuilder, Row, Sqlite};
 
-use crate::{model::cert::{PeerCertificate, UnsignedPeerCertificate}, FromBytesError, Context, FromBytes, ToBytes};
+use crate::{
+    model::cert::{PeerCertificate, UnsignedPeerCertificate},
+    Context, FromBytes, FromBytesError, ToBytes,
+};
 
-use super::{Resource, ResourceKind, ResourceId};
+use super::{Resource, ResourceId, ResourceKind};
 
 /// A query that may be submitted to lookup a peer's certificate
 #[derive(Debug, Clone, Copy, FromBytes, ToBytes)]
@@ -35,31 +38,32 @@ impl Resource for PeerCertificate {
     fn id(&self) -> Result<ResourceId<Self>, Self::HandleError> {
         Ok(ResourceId::new(self.cert.keychain.fingerprint()?))
     }
-    
+
     /// Handle the reception of a new instance of this resource, performing all needed validation
     /// and potentially inserting a new value into the [Context]'s database.
     ///
     /// Must return a handle to the inserted resource
     async fn handle(ctx: &Context, bytes: Bytes) -> Result<ResourceId<Self>, Self::HandleError> {
-        let ((cert_bytes, cert), signature) = untrusted::Input::from(&bytes)
-            .read_all(
-                FromBytesError::ExtraBytes,
-                |mut rdr| {
-                    let (bytes, cert) = UnsignedPeerCertificate::partial_decode(&mut rdr)?;
-                    let signature = Signature::decode(&mut rdr)?;
+        let ((cert_bytes, cert), signature) =
+            untrusted::Input::from(&bytes).read_all(FromBytesError::ExtraBytes, |mut rdr| {
+                let (bytes, cert) = UnsignedPeerCertificate::partial_decode(&mut rdr)?;
+                let signature = Signature::decode(&mut rdr)?;
 
-                    Ok(((bytes, cert), signature))
-                }
-            )?;
-                
+                Ok(((bytes, cert), signature))
+            })?;
+
         let now = Utc::now();
 
         match cert.timestamp <= now {
             true => match cert.timestamp + cert.ttl >= now {
-                true => match cert.keychain.verification.verify(cert_bytes.as_slice_less_safe(), &signature) {
+                true => match cert
+                    .keychain
+                    .verification
+                    .verify(cert_bytes.as_slice_less_safe(), &signature)
+                {
                     Ok(_) => {
                         let fingerprint = cert.keychain.fingerprint()?;
-                        
+
                         {
                             let fingerprint = fingerprint.as_slice();
                             let ttl = cert.ttl.num_seconds();
@@ -74,7 +78,7 @@ impl Resource for PeerCertificate {
                         }
 
                         Ok(ResourceId::new(fingerprint))
-                    },
+                    }
                     Err(e) => Err(PeerCertificateHandleError::InvalidSignature(e).into()),
                 },
                 false => Err(PeerCertificateHandleError::Expired.into()),
@@ -82,12 +86,12 @@ impl Resource for PeerCertificate {
             false => Err(PeerCertificateHandleError::InvalidTimestamp(cert.timestamp).into()),
         }
     }
-    
+
     /// Store a new instance of [Self] into the [Context]'s database, returning a handle to the
     /// inserted resource
     async fn store(ctx: &Context, val: Self) -> Result<ResourceId<Self>, Self::HandleError> {
         let fingerprint = val.cert.keychain.fingerprint()?;
-        
+
         {
             let fingerprint = &fingerprint as &[u8];
             let ttl = val.cert.ttl.num_seconds();
@@ -99,15 +103,17 @@ impl Resource for PeerCertificate {
                 ttl,
                 data,
             ).execute(&ctx.db).await?;
-        
         }
 
         Ok(ResourceId::new(fingerprint))
     }
-    
+
     /// Generate and execute an SQL query that will return records that match the given
     /// [Query](Self::Query)
-    fn query_bytes<'c>(ctx: &'c Context, query: Self::Query) -> BoxStream<'c, Result<Vec<u8>, Self::QueryError>> {
+    fn query_bytes<'c>(
+        ctx: &'c Context,
+        query: Self::Query,
+    ) -> BoxStream<'c, Result<Vec<u8>, Self::QueryError>> {
         Box::pin(try_stream! {
             let mut builder = QueryBuilder::new("select data from certificates");
             let query = query.sql(&mut builder).build();
@@ -121,7 +127,10 @@ impl Resource for PeerCertificate {
 
     /// Generate and execute an SQL query that will return the resource IDs of records that match the given
     /// [Query](Self::Query)
-    fn query_ids<'c>(ctx: &'c Context, query: Self::Query) -> BoxStream<'c, Result<PeerCertificateId, Self::QueryError>> {
+    fn query_ids<'c>(
+        ctx: &'c Context,
+        query: Self::Query,
+    ) -> BoxStream<'c, Result<PeerCertificateId, Self::QueryError>> {
         Box::pin(try_stream! {
             let mut builder = QueryBuilder::new("select userid from certificates");
             let query = query.sql(&mut builder)
@@ -135,7 +144,10 @@ impl Resource for PeerCertificate {
     }
 
     /// Fetch the bytes that can be decoded to an instance of this resource type
-    async fn fetch_bytes(ctx: &Context, id: PeerCertificateId) -> Result<Vec<u8>, Self::QueryError> {
+    async fn fetch_bytes(
+        ctx: &Context,
+        id: PeerCertificateId,
+    ) -> Result<Vec<u8>, Self::QueryError> {
         sqlx::query!(r#"select data from certificates where userid=?"#, id)
             .map(|v| v.data)
             .fetch_one(&ctx.db)
@@ -143,7 +155,6 @@ impl Resource for PeerCertificate {
             .map_err(Into::into)
     }
 }
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum PeerCertificateQueryError {
@@ -177,13 +188,16 @@ impl PeerCertificateQuery {
             Self::Datetime(_) => 2,
         }
     }
-    
+
     /// Append an SQL condition to the given query builder that will filter results to match the
     /// query
-    pub(crate) fn sql<'a, 'b>(self, query: &'a mut QueryBuilder<'b, Sqlite>) -> &'a mut QueryBuilder<'b, Sqlite> {
+    pub(crate) fn sql<'a, 'b>(
+        self,
+        query: &'a mut QueryBuilder<'b, Sqlite>,
+    ) -> &'a mut QueryBuilder<'b, Sqlite> {
         match self {
             Self::Fingerprint(f) => query.push(" where userid= ").push_bind(f),
-            Self::Datetime(dt) => query.push(" where creation_timestamp>=").push_bind(dt)
+            Self::Datetime(dt) => query.push(" where creation_timestamp>=").push_bind(dt),
         }
     }
 }

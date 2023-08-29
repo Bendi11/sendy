@@ -117,8 +117,7 @@ impl ReliableSocket {
         msg: &B,
     ) -> std::io::Result<()> {
         let mut splitter = MessageSplitter::new(kind, id);
-        msg
-            .encode(&mut splitter)
+        msg.encode(&mut splitter)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
         let mut pkts = splitter
             .into_packet_iter()
@@ -148,7 +147,11 @@ impl ReliableSocket {
     }
 
     /// Wait for the peer to send a response to an already-sent message identified by `msgid`
-    fn wait_response(&self, from: IpAddr, msgid: NonZeroU8) -> oneshot::Receiver<Result<Bytes, Bytes>> {
+    fn wait_response(
+        &self,
+        from: IpAddr,
+        msgid: NonZeroU8,
+    ) -> oneshot::Receiver<Result<Bytes, Bytes>> {
         let (tx, rx) = oneshot::channel::<Result<Bytes, Bytes>>();
         self.recv.responses.insert((from, msgid), tx);
         rx

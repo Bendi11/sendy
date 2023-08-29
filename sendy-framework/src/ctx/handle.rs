@@ -1,4 +1,13 @@
-use crate::{Context, sock::{FinishedMessage, PacketKind}, msg::conn::ConnResponseErr, model::cert::PeerCertificate, FromBytesError, ctx::{res::{Resource, cert::PeerCertificateHandleError}, Peer, SendyError}};
+use crate::{
+    ctx::{
+        res::{cert::PeerCertificateHandleError, Resource},
+        Peer, SendyError,
+    },
+    model::cert::PeerCertificate,
+    msg::conn::ConnResponseErr,
+    sock::{FinishedMessage, PacketKind},
+    Context, FromBytesError,
+};
 
 impl Context {
     /// Handle a received message from another peer
@@ -8,46 +17,46 @@ impl Context {
                 let cert = match PeerCertificate::handle(self, msg.payload).await {
                     Ok(cert) => cert,
                     Err(e) => {
-                        log::error!("Error when receiving peer certificate from CONN message: {}", e);
+                        log::error!(
+                            "Error when receiving peer certificate from CONN message: {}",
+                            e
+                        );
 
                         let resp = match e {
-                            PeerCertificateHandleError::InvalidSignature(_) => ConnResponseErr::InvalidCertificateSignature,
-                            PeerCertificateHandleError::Expired => ConnResponseErr::ExpiredCertificate,
+                            PeerCertificateHandleError::InvalidSignature(_) => {
+                                ConnResponseErr::InvalidCertificateSignature
+                            }
+                            PeerCertificateHandleError::Expired => {
+                                ConnResponseErr::ExpiredCertificate
+                            }
                             _ => ConnResponseErr::Unknown,
                         };
 
                         let tmp_tx = self.socks.create_transmitter(msg.from).await?;
 
-                        self
-                            .socks
-                            .send_with_id(&tmp_tx, msg.id, PacketKind::RespondErr, &resp).await?;
-
+                        self.socks
+                            .send_with_id(&tmp_tx, msg.id, PacketKind::RespondErr, &resp)
+                            .await?;
 
                         return Err(SendyError::Certificate(e));
                     }
                 };
 
                 log::trace!("Got valid certificate {} from {}", cert.short(), msg.from);
-                
+
                 let tx = self.socks.create_transmitter(msg.from).await?;
 
-                let peer = Peer {
-                    cert,
-                    tx,
-                };
+                let peer = Peer { cert, tx };
 
-                self
-                    .socks
+                self.socks
                     .send_with_id(&peer.tx, msg.id, PacketKind::RespondOk, &self.certificate)
                     .await?;
 
                 self.peers.insert(msg.from, peer);
 
                 log::trace!("Connected to {}", msg.from);
-            },
-            PacketKind::Advertise => {
-
-            },
+            }
+            PacketKind::Advertise => {}
             other => log::error!("Unrecognized message tag {:X}", other as u8),
         }
 

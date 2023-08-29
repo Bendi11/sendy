@@ -43,10 +43,7 @@ pub enum CliCommand {
             help = "Username to display to other users"
         )]
         username: String,
-        #[arg(
-            index = 1,
-            help = "Public IP address of the local host"
-        )]
+        #[arg(index = 1, help = "Public IP address of the local host")]
         publicip: Ipv4Addr,
         #[arg(
             short = 'p',
@@ -128,8 +125,10 @@ async fn main() {
                     PrivateKeychain::new(signature.into(), encrypt)
                 }
             };
-            
-            let ctx = Context::new(keychain, SocketConfig::default(), "USER".to_owned()).await.unwrap();
+
+            let ctx = Context::new(keychain, SocketConfig::default(), username)
+                .await
+                .unwrap();
 
             for port in ports {
                 if let Err(e) = ctx.listen(port).await {

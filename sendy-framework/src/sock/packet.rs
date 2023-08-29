@@ -2,7 +2,7 @@ use std::{fmt, num::NonZeroU8};
 
 use bytes::BufMut;
 
-use crate::{ByteWriter, FromBytes, FromBytesError, ToBytes, ToBytesError};
+use crate::{FromBytes, FromBytesError, ToBytes, ToBytesError};
 
 /// 'minimum maximum reassembly buffer size' guaranteed to be deliverable, minus IP and UDP headers
 pub(crate) const MAX_SAFE_UDP_PAYLOAD: usize = 500;
@@ -19,7 +19,7 @@ pub(in crate::sock) const MSGID_OFFSET: usize = 1;
 pub(crate) const BLOCK_SIZE: usize = MAX_SAFE_UDP_PAYLOAD - HEADER_SZ;
 
 /// An 8 byte packet header with packet identifiers, checksum, and packet kind markers
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ToBytes, FromBytes)]
 pub(crate) struct PacketHeader {
     /// 1 byte representing the kind of packet this is, see [PacketKind] for usage
     pub kind: PacketKind,
@@ -53,7 +53,7 @@ pub(crate) struct PacketId {
 ///  message in MAX_BLOCK_SIZE blocks, and the payload is always copied to the message buffer at
 ///  offset 0
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ToBytes, FromBytes)]
 pub enum PacketKind {
     /// Used to connect to other nodes with hole punching
     Conn = 0,
@@ -96,25 +96,6 @@ impl FromBytes<'_> for PacketId {
     }
 }
 
-impl ToBytes for PacketHeader {
-    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
-        self.kind.encode(buf)?;
-        self.id.encode(buf)?;
-        self.checksum.encode(buf)?;
-        Ok(())
-    }
-}
-
-impl FromBytes<'_> for PacketHeader {
-    fn decode(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
-        let kind = PacketKind::decode(buf)?;
-        let id = PacketId::decode(buf)?;
-        let checksum = u32::decode(buf)?;
-
-        Ok(Self { kind, id, checksum })
-    }
-}
-
 impl PacketKind {
     /// If the packet is a control packet that will not be followed by more [PacketKind::Transfer]
     /// packets, see [PacketKind] for more
@@ -124,48 +105,13 @@ impl PacketKind {
             _ => false,
         }
     }
-    
+
     /// Check if this packet tag is a response to another message
     pub const fn is_response(&self) -> bool {
         match self {
             Self::RespondOk | Self::RespondErr => true,
             _ => false,
         }
-    }
-}
-
-impl FromBytes<'_> for PacketKind {
-    fn decode(buf: &mut untrusted::Reader) -> Result<Self, FromBytesError> {
-        let value = u8::decode(buf)?;
-        Ok(match value {
-            0 => Self::Conn,
-            1 => Self::Ack,
-            2 => Self::Transfer,
-            3 => Self::RespondOk,
-            4 => Self::RespondErr,
-            5 => Self::Advertise,
-            _ => {
-                return Err(FromBytesError::Parsing(format!(
-                    "Invalid packet kind tag {:X}",
-                    value
-                )))
-            }
-        })
-    }
-}
-
-impl ToBytes for PacketKind {
-    fn encode<W: BufMut>(&self, buf: &mut W) -> Result<(), ToBytesError> {
-        let v = match self {
-            Self::Conn => 0,
-            Self::Ack => 1,
-            Self::Transfer => 2,
-            Self::RespondOk => 3,
-            Self::RespondErr => 4,
-            Self::Advertise => 5,
-        };
-        buf.put_u8(v);
-        Ok(())
     }
 }
 

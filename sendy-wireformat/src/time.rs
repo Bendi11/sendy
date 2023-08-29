@@ -1,6 +1,6 @@
-use chrono::{Utc, Duration, NaiveDateTime};
+use chrono::{Duration, NaiveDateTime, Utc};
 
-use crate::{ToBytes, FromBytesError, FromBytes};
+use crate::{FromBytes, FromBytesError, ToBytes};
 
 use super::{ByteWriter, ToBytesError};
 
@@ -36,14 +36,13 @@ impl ToBytes for Duration {
     fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
         self.num_seconds().encode(buf)
     }
-    
+
     fn size_hint(&self) -> usize {
         self.num_seconds().size_hint()
     }
 }
 impl FromBytes<'_> for Duration {
     fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        i64::decode(reader)
-            .map(Self::seconds)
+        i64::decode(reader).map(Self::seconds)
     }
 }

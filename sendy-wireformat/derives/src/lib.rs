@@ -1,8 +1,10 @@
 use proc_macro::TokenStream;
-use quote::{ToTokens, quote};
-use syn::{parse_macro_input, DeriveInput, Data, Fields, Field, Ident, Index, Type, DataStruct, DataEnum, Variant, Expr, LitInt, Attribute, spanned::Spanned};
-use proc_macro2::{TokenStream as TokenStream2, Literal};
-
+use proc_macro2::{Literal, TokenStream as TokenStream2};
+use quote::{quote, ToTokens};
+use syn::{
+    parse_macro_input, spanned::Spanned, Attribute, Data, DataEnum, DataStruct, DeriveInput, Expr,
+    Field, Fields, Ident, Index, LitInt, Type, Variant,
+};
 
 #[proc_macro_derive(ToBytes)]
 pub fn derive_tobytes(input: TokenStream) -> TokenStream {
@@ -25,34 +27,26 @@ pub fn derive_frombytes(input: TokenStream) -> TokenStream {
     }
 }
 
-
 fn derive_tobytes_enum(ident: Ident, attr: &[Attribute], data: DataEnum) -> TokenStream {
     let (_, discriminant) = variant_name_discriminant_iter(data.variants.iter());
     let variant_match = data.variants.iter().map(empty_constructor_of);
     let variant_match2 = variant_match.clone();
 
-    let impl_variant = data
-        .variants
-        .iter()
-        .map(|variant| {
-            let (name, ty) = field_rawname_type_iter(variant.fields.iter());
+    let impl_variant = data.variants.iter().map(|variant| {
+        let (name, ty) = field_rawname_type_iter(variant.fields.iter());
 
-            quote! {
-                #( <#ty as ::sendy_wireformat::ToBytes>::encode::<B>(&#name, buf)?; )*
-            }
-        });
+        quote! {
+            #( <#ty as ::sendy_wireformat::ToBytes>::encode::<B>(&#name, buf)?; )*
+        }
+    });
 
-    let impl_variant_size = data
-        .variants
-        .iter()
-        .map(|variant| {
-            let (name, ty) = field_rawname_type_iter(variant.fields.iter());
+    let impl_variant_size = data.variants.iter().map(|variant| {
+        let (name, ty) = field_rawname_type_iter(variant.fields.iter());
 
-            quote! {
-                #( + <#ty as ::sendy_wireformat::ToBytes>::size_hint(&#name) )*
-            }
-        });
-
+        quote! {
+            #( + <#ty as ::sendy_wireformat::ToBytes>::size_hint(&#name) )*
+        }
+    });
 
     let implementation = quote! {
         impl ::sendy_wireformat::ToBytes for #ident {
@@ -64,7 +58,7 @@ fn derive_tobytes_enum(ident: Ident, attr: &[Attribute], data: DataEnum) -> Toke
                     }),*
                 }
 
-                Ok(()) 
+                Ok(())
             }
 
             fn size_hint(&self) -> usize {
@@ -74,7 +68,6 @@ fn derive_tobytes_enum(ident: Ident, attr: &[Attribute], data: DataEnum) -> Toke
             }
         }
     };
-    
 
     TokenStream::from(implementation)
 }
@@ -82,21 +75,17 @@ fn derive_tobytes_enum(ident: Ident, attr: &[Attribute], data: DataEnum) -> Toke
 fn derive_frombytes_enum(ident: Ident, attr: &[Attribute], data: DataEnum) -> TokenStream {
     let (_, discriminant) = variant_name_discriminant_iter(data.variants.iter());
 
-    let impl_variant = data
-        .variants
-        .iter()
-        .map(|variant| {
-            let (name, ty) = field_rawname_type_iter(variant.fields.iter());
-            let constructor = constructor_of(&variant.ident, &variant.fields);
+    let impl_variant = data.variants.iter().map(|variant| {
+        let (name, ty) = field_rawname_type_iter(variant.fields.iter());
+        let constructor = constructor_of(&variant.ident, &variant.fields);
 
-            quote! {
-                #( let #name = <#ty as ::sendy_wireformat::FromBytes<'a>>::decode(reader)?; )*
-                Ok(Self::#constructor)
-            }
-        });
-    
+        quote! {
+            #( let #name = <#ty as ::sendy_wireformat::FromBytes<'a>>::decode(reader)?; )*
+            Ok(Self::#constructor)
+        }
+    });
+
     let errormsg = format!("Invalid tag for {}", ident);
-
 
     let implementation = quote! {
         impl<'a> ::sendy_wireformat::FromBytes<'a> for #ident {
@@ -112,42 +101,62 @@ fn derive_frombytes_enum(ident: Ident, attr: &[Attribute], data: DataEnum) -> To
             }
         }
     };
-    
 
     TokenStream::from(implementation)
 }
 
-/// Get the variant names and their assigned tags 
-fn variant_name_discriminant_iter<'a>(variants: impl Iterator<Item = &'a Variant>) -> (Vec<Ident>, Vec<Expr>) {
+/// Get the variant names and their assigned tags
+fn variant_name_discriminant_iter<'a>(
+    variants: impl Iterator<Item = &'a Variant>,
+) -> (Vec<Ident>, Vec<Expr>) {
     variants
-        .map(|variant| (
-            variant.ident.clone(),
-            match variant.discriminant.clone() {
-                Some((_, disc)) => disc,
-                None => match variant.attrs.iter().find(|attr| attr.meta.path().get_ident().map(|i| i == "wiretag").unwrap_or(false)) {
-                    Some(attr) => match attr.parse_args::<LitInt>() {
-                        Ok(lit) => Expr::Lit(syn::ExprLit { attrs: vec![], lit: syn::Lit::Int(lit), }),
-                        Err(e) => panic!("Invalid enum tag for variant {}: {}", variant.ident, e),
+        .map(|variant| {
+            (
+                variant.ident.clone(),
+                match variant.discriminant.clone() {
+                    Some((_, disc)) => disc,
+                    None => match variant.attrs.iter().find(|attr| {
+                        attr.meta
+                            .path()
+                            .get_ident()
+                            .map(|i| i == "wiretag")
+                            .unwrap_or(false)
+                    }) {
+                        Some(attr) => match attr.parse_args::<LitInt>() {
+                            Ok(lit) => Expr::Lit(syn::ExprLit {
+                                attrs: vec![],
+                                lit: syn::Lit::Int(lit),
+                            }),
+                            Err(e) => {
+                                panic!("Invalid enum tag for variant {}: {}", variant.ident, e)
+                            }
+                        },
+                        None => panic!(
+                            "Variant {} has no 'wiretag' attribute or discriminant assignment",
+                            variant.ident
+                        ),
                     },
-                    None => panic!("Variant {} has no 'wiretag' attribute or discriminant assignment", variant.ident),
                 },
-            }
-        ))
+            )
+        })
         .unzip()
 }
 /// Get field names or indexes to use when referencing the field of a struct
-fn field_name_type_iter<'a>(fields: impl Iterator<Item = &'a Field>) -> (Vec<TokenStream2>, Vec<Type>) {
+fn field_name_type_iter<'a>(
+    fields: impl Iterator<Item = &'a Field>,
+) -> (Vec<TokenStream2>, Vec<Type>) {
     fields
         .enumerate()
-        .map(|(idx, v)| (
-                v
-                    .ident
+        .map(|(idx, v)| {
+            (
+                v.ident
                     .clone()
                     .map(|i| i.to_token_stream())
                     .unwrap_or(Index::from(idx).to_token_stream()),
-                v.ty.clone()
+                v.ty.clone(),
             )
-        ).unzip::<_, _, Vec<_>, Vec<_>>()
+        })
+        .unzip::<_, _, Vec<_>, Vec<_>>()
 }
 
 /// Get field names or indexes to use when constructing a struct
@@ -158,14 +167,15 @@ fn field_name_type_iter<'a>(fields: impl Iterator<Item = &'a Field>) -> (Vec<Tok
 fn field_rawname_type_iter<'a>(fields: impl Iterator<Item = &'a Field>) -> (Vec<Ident>, Vec<Type>) {
     fields
         .enumerate()
-        .map(|(idx, v)| (
-                v
-                    .ident
+        .map(|(idx, v)| {
+            (
+                v.ident
                     .clone()
                     .unwrap_or(Ident::new(&*format!("_{}", idx), v.span())),
-                v.ty.clone()
+                v.ty.clone(),
             )
-        ).unzip::<_, _, Vec<_>, Vec<_>>()
+        })
+        .unzip::<_, _, Vec<_>, Vec<_>>()
 }
 
 /// Get a constructor expression for the given struct type, variables must be named
@@ -175,11 +185,11 @@ fn constructor_of(ident: &Ident, fields: &Fields) -> TokenStream2 {
     let (name, _) = field_rawname_type_iter(fields.into_iter());
 
     match is_named {
-        true => quote!{ #ident { #(#name),* } },
+        true => quote! { #ident { #(#name),* } },
         false => match is_unit {
-            true => quote!{ #ident },
-            false => quote!{ #ident(#(#name),*) },
-        }
+            true => quote! { #ident },
+            false => quote! { #ident(#(#name),*) },
+        },
     }
 }
 
@@ -211,11 +221,11 @@ fn empty_constructor_of(variant: &Variant) -> TokenStream2 {
     let ident = &variant.ident;
 
     match is_named {
-        true => quote!{ #ident { #(#name),* } },
+        true => quote! { #ident { #(#name),* } },
         false => match is_unit {
-            true => quote!{ #ident },
-            false => quote!{ #ident(#(#name),*) },
-        }
+            true => quote! { #ident },
+            false => quote! { #ident(#(#name),*) },
+        },
     }
 }
 
@@ -224,12 +234,12 @@ fn derive_frombytes_struct(ident: Ident, data: DataStruct) -> TokenStream {
 
     let constructor = constructor_of(&ident, &data.fields);
 
-    let implementation = quote !{
+    let implementation = quote! {
         impl<'a> ::sendy_wireformat::FromBytes<'a> for #ident {
             fn decode(reader: &mut ::sendy_wireformat::untrusted::Reader<'a>) -> ::core::result::Result<Self, ::sendy_wireformat::FromBytesError> {
                 #( let #name = <#ty as ::sendy_wireformat::FromBytes<'a>>::decode(reader)?; )*
-                
-                Ok(#constructor) 
+
+                Ok(#constructor)
             }
         }
     };

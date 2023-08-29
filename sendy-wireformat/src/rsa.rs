@@ -1,19 +1,18 @@
-use crate::{ToBytes, ByteWriter, ToBytesError, FromBytes, FromBytesError};
+use crate::{ByteWriter, FromBytes, FromBytesError, ToBytes, ToBytesError};
 use rsa::sha2::Sha256;
 use rsa::{pkcs1v15::Signature, signature::SignatureEncoding};
 use rsa::{
     pkcs1v15::{SigningKey, VerifyingKey},
-    pkcs8::{der::Decode, EncodePrivateKey, EncodePublicKey, DecodePublicKey, PrivateKeyInfo},
+    pkcs8::{der::Decode, DecodePublicKey, EncodePrivateKey, EncodePublicKey, PrivateKeyInfo},
     RsaPrivateKey, RsaPublicKey,
 };
-
 
 impl ToBytes for RsaPrivateKey {
     fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
         let der = self.to_pkcs8_der().map_err(|e| {
             ToBytesError::InvalidValue(format!("Failed to encode private key as DER: {}", e))
         })?;
-        
+
         der.as_bytes().encode(buf)
     }
 }
@@ -51,7 +50,7 @@ impl ToBytes for RsaPublicKey {
         let der = self
             .to_public_key_der()
             .map_err(|e| ToBytesError::InvalidValue(format!("Invalid RSA public key: {}", e)))?;
-        
+
         der.as_bytes().encode(buf)
     }
 }
@@ -62,8 +61,6 @@ impl FromBytes<'_> for RsaPublicKey {
             .map_err(|e| FromBytesError::Parsing(format!("Failed to read public key DER: {}", e)))
     }
 }
-
-
 
 impl ToBytes for Signature {
     fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
@@ -77,7 +74,8 @@ impl ToBytes for Signature {
 impl<'a> FromBytes<'a> for Signature {
     fn decode(reader: &mut untrusted::Reader<'a>) -> Result<Self, FromBytesError> {
         let buf = <&[u8]>::decode(reader)?;
-        Self::try_from(buf)
-            .map_err(|e| FromBytesError::Parsing(format!("Failed to parse encoded signature: {}", e)))
+        Self::try_from(buf).map_err(|e| {
+            FromBytesError::Parsing(format!("Failed to parse encoded signature: {}", e))
+        })
     }
 }

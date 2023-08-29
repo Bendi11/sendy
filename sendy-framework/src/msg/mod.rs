@@ -2,7 +2,7 @@
 
 pub mod conn;
 
-use crate::{sock::PacketKind, ToBytes, FromBytes};
+use crate::{sock::PacketKind, FromBytes, ToBytes};
 
 pub use conn::Conn;
 
