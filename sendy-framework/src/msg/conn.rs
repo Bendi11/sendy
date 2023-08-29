@@ -1,6 +1,8 @@
+//! The conn transaction is used to setup an authenticated connection with another peer
+
 use crate::{model::cert::PeerCertificate, sock::PacketKind, FromBytes, ToBytes};
 
-use super::Message;
+use super::{Message, Transaction};
 
 /// Conn message used to establish an authenticated connection with another peer
 #[derive(Debug, ToBytes, FromBytes)]
@@ -30,4 +32,20 @@ pub enum ConnResponseErr {
 
 impl Message for Conn {
     const TAG: PacketKind = PacketKind::Conn;
+}
+
+impl Message for ConnResponseOk {
+    const TAG: PacketKind = PacketKind::RespondOk;
+}
+
+impl Message for ConnResponseErr {
+    const TAG: PacketKind = PacketKind::RespondErr;
+}
+
+
+struct ConnTransaction;
+impl Transaction for ConnTransaction {
+    type Request = Conn;
+    type OkResponse = ConnResponseOk;
+    type ErrResponse = ConnResponseErr;
 }

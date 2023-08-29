@@ -7,23 +7,47 @@ use crate::{model::crypto::SHA256_HASH_LEN, Context, FromBytes, FromBytesError, 
 use async_stream::try_stream;
 use async_trait::async_trait;
 use bytes::Bytes;
+use chrono::Utc;
 use futures::stream::BoxStream;
+use sendy_wireformat::ToBytesError;
 use sqlx::{Decode, Encode, Sqlite};
 
 pub mod cert;
+pub mod channel;
 
 /// Tag that can identify the kind of resource that a generic resource ID is referencing
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, ToBytes, FromBytes)]
 pub enum ResourceKind {
     /// A signed certificate that validates a peer
-    Certificate,
+    Certificate = 0,
+    /// A channel record signed by the channel owner
+    Channel = 1,
 }
 
 /// A 32-byte ID that uniquely identifies a resource by the hash of its contents
 pub struct ResourceId<R: Resource> {
     hash: [u8; SHA256_HASH_LEN],
     boo: PhantomData<R>,
+}
+
+/// Any error that may occur when operating with a resource in a database
+#[derive(Debug, thiserror::Error)]
+pub enum ResourceError {
+    #[error("I/O error: {0}")]
+    IO(#[from] std::io::Error),
+    #[error("Failed to decode a value from bytes: {0}")]
+    Decode(#[from] FromBytesError),
+    #[error("Failed to encode a value to bytes: {0}")]
+    Encode(#[from] ToBytesError),
+    #[error("Failed to execute database operation: {0}")]
+    Sql(#[from] sqlx::Error),
+    #[error("Invalid signature: {0}")]
+    InvalidSignature(#[from] signature::Error),
+    #[error("Invalid certificate timestamp of resource: {0}")]
+    InvalidTimestamp(chrono::DateTime<Utc>),
+    #[error("Resource TTL has expired")]
+    Expired,
 }
 
 /// Resources are any data meant to be persisted on the sendy network, they must be signed by an
@@ -36,50 +60,45 @@ pub trait Resource: ToBytes + for<'a> FromBytes<'a> {
     /// Associated type that is used to query other nodes for this resource
     type Query: ToBytes + FromBytes<'static> + Send;
 
-    /// Errors that may occur when handling the reception of a new instance of this resource
-    type HandleError: std::error::Error;
-    /// Errors that may occur when querying / decoding resources from the database
-    type QueryError: std::error::Error + From<FromBytesError>;
-
     /// Get or generate the ID of the given resource
-    fn id(&self) -> Result<ResourceId<Self>, Self::HandleError>;
+    fn id(&self) -> Result<ResourceId<Self>, ResourceError>;
 
     /// Handle the reception of a new instance of this resource, performing all needed validation
     /// and potentially inserting a new value into the [Context]'s database.
     ///
     /// Must return a handle to the inserted resource
-    async fn handle(ctx: &Context, bytes: Bytes) -> Result<ResourceId<Self>, Self::HandleError>;
+    async fn handle(ctx: &Context, bytes: Bytes) -> Result<ResourceId<Self>, ResourceError>;
 
     /// Store a new instance of [Self] into the [Context]'s database, returning a handle to the
     /// inserted resource
-    async fn store(ctx: &Context, val: Self) -> Result<ResourceId<Self>, Self::HandleError>;
+    async fn store(ctx: &Context, val: Self) -> Result<ResourceId<Self>, ResourceError>;
 
     /// Generate and execute an SQL query that will return records that match the given
     /// [Query](Self::Query)
     fn query_bytes<'c>(
         ctx: &'c Context,
         query: Self::Query,
-    ) -> BoxStream<'c, Result<Vec<u8>, Self::QueryError>>;
+    ) -> BoxStream<'c, Result<Vec<u8>, ResourceError>>;
 
     /// Generate and execute an SQL query that will return the resource IDs of records that match the given
     /// [Query](Self::Query)
     fn query_ids<'c>(
         ctx: &'c Context,
         query: Self::Query,
-    ) -> BoxStream<'c, Result<ResourceId<Self>, Self::QueryError>>;
+    ) -> BoxStream<'c, Result<ResourceId<Self>, ResourceError>>;
 
     /// Fetch the bytes that can be decoded to an instance of this resource type
-    async fn fetch_bytes(ctx: &Context, id: ResourceId<Self>) -> Result<Vec<u8>, Self::QueryError>;
+    async fn fetch_bytes(ctx: &Context, id: ResourceId<Self>) -> Result<Vec<u8>, ResourceError>;
 
     /// Query the database using the given [Query](Self::Query) type, and decode each result to an
     /// instance of [Self]
     fn query<'c>(
         ctx: &'c Context,
         query: Self::Query,
-    ) -> BoxStream<'c, Result<Self, Self::QueryError>>
+    ) -> BoxStream<'c, Result<Self, ResourceError>>
     where
         Self: Send + Sync,
-        Self::QueryError: Send + Sync,
+        ResourceError: Send + Sync,
     {
         Box::pin(try_stream! {
             let query = Self::query_bytes(ctx, query);
@@ -91,7 +110,7 @@ pub trait Resource: ToBytes + for<'a> FromBytes<'a> {
     }
 
     /// Fetch and decode an instance of `Self` by the given resource ID
-    async fn fetch(ctx: &Context, id: ResourceId<Self>) -> Result<Self, Self::QueryError>
+    async fn fetch(ctx: &Context, id: ResourceId<Self>) -> Result<Self, ResourceError>
     where
         Self: Sync,
     {

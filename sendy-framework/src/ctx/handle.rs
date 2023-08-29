@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use crate::{
     ctx::{
-        res::{cert::PeerCertificateHandleError, Resource},
+        res::{Resource, ResourceError},
         Peer, SendyError,
     },
     model::cert::PeerCertificate,
@@ -23,10 +25,10 @@ impl Context {
                         );
 
                         let resp = match e {
-                            PeerCertificateHandleError::InvalidSignature(_) => {
+                            ResourceError::InvalidSignature(_) => {
                                 ConnResponseErr::InvalidCertificateSignature
                             }
-                            PeerCertificateHandleError::Expired => {
+                            ResourceError::Expired => {
                                 ConnResponseErr::ExpiredCertificate
                             }
                             _ => ConnResponseErr::Unknown,
@@ -38,7 +40,7 @@ impl Context {
                             .send_with_id(&tmp_tx, msg.id, PacketKind::RespondErr, &resp)
                             .await?;
 
-                        return Err(SendyError::Certificate(e));
+                        return Err(SendyError::Resource(e));
                     }
                 };
 
@@ -52,7 +54,7 @@ impl Context {
                     .send_with_id(&peer.tx, msg.id, PacketKind::RespondOk, &self.certificate)
                     .await?;
 
-                self.peers.insert(msg.from, peer);
+                self.peers.insert(msg.from, Arc::new(peer));
 
                 log::trace!("Connected to {}", msg.from);
             }
@@ -62,15 +64,4 @@ impl Context {
 
         Ok(())
     }
-}
-
-/// Any error that occurs when handling a received message
-#[derive(Debug, thiserror::Error)]
-enum HandleMessageError {
-    #[error("I/O error: {0}")]
-    IO(#[from] std::io::Error),
-    #[error("Failed to decode a value from message buffer: {0}")]
-    Parse(#[from] FromBytesError),
-    #[error("Failed to decode certificate {0}")]
-    CertificateHandle(#[from] PeerCertificateHandleError),
 }

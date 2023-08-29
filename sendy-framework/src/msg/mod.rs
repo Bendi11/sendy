@@ -11,3 +11,11 @@ pub use conn::Conn;
 pub trait Message: ToBytes + for<'a> FromBytes<'a> {
     const TAG: PacketKind;
 }
+
+/// A transaction is a request -> response procedure, defining the request type, and the two
+/// possible response types for successful or erroneous results
+pub trait Transaction {
+    type Request: Message;
+    type OkResponse: Message;
+    type ErrResponse: Message;
+}

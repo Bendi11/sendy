@@ -1,4 +1,6 @@
+use bytes::Bytes;
 use dashmap::DashMap;
+use futures::Future;
 use sendy_wireformat::FromBytesError;
 use signature::Signer;
 use std::net::Ipv4Addr;
@@ -10,6 +12,7 @@ use sqlx::SqlitePool;
 
 use crate::model::cert::{PeerCapabilities, PeerCertificate, UnsignedPeerCertificate};
 use crate::model::crypto::PrivateKeychain;
+use crate::msg::{Transaction, Message};
 use crate::msg::conn::ConnResponseErr;
 use crate::sock::{PacketKind, ReliableSocket, ReliableSocketTransmitter};
 use crate::{FromBytes, SocketConfig, ToBytes};
@@ -19,7 +22,8 @@ pub mod res;
 
 pub use res::Resource;
 
-use self::res::cert::{PeerCertificateHandleError, PeerCertificateId};
+use self::res::ResourceError;
+use self::res::cert::PeerCertificateId;
 
 /// The main interface for interacting with the Sendy network - contains state for all peer
 /// connections and resource persistence
@@ -28,7 +32,7 @@ pub struct Context {
     /// Manager for all lower-level UDP operations
     socks: ReliableSocket,
     /// A map of IP + port combinations to connected and authenticated peers
-    pub(crate) peers: DashMap<SocketAddr, Peer>,
+    pub(crate) peers: DashMap<SocketAddr, Arc<Peer>>,
     /// Keychain used to sign and encrypt messages
     pub(crate) keychain: PrivateKeychain,
     /// Signed certificate for our keychain that we transmit to other peers to establish an
@@ -135,9 +139,30 @@ impl Context {
             cert: cert.clone(),
         };
 
-        self.peers.insert(addr, peer);
+        self.peers.insert(addr, Arc::new(peer));
 
         Ok(())
+    } 
+    
+    /// Commit a transaction with another peer, submitting a request and awaiting a response
+    pub async fn transact<T: Transaction>(&self, to: &Peer, req: &T::Request) -> Result<Result<T::OkResponse, T::ErrResponse>, SendyError> {
+        let resp = self.msg(to, req).await?;
+
+        Ok(match resp.await {
+            Ok(bytes) => Ok(T::OkResponse::full_decode_from_slice(&bytes)?),
+            Err(bytes) => Err(T::ErrResponse::full_decode_from_slice(&bytes)?),
+        })
+    }
+    
+    /// Send a message to the given peer, dropping all peer state if e.g. the connection times out
+    /// and validating the message with the peer's public key
+    ///
+    /// All higher-level [Context] procedures should utilize this method over
+    /// [send_wait_response](ReliableSocket::send_wait_response) as it handles dropping connections
+    pub async fn msg<M: Message>(&self, to: &Peer, msg: &M) -> Result<impl Future<Output = Result<Bytes, Bytes>>, SendyError> {
+        //todo implement connection timeout
+        let resp = self.socks.send_wait_response(&to.tx, M::TAG, msg).await?;
+        Ok(resp)
     }
 }
 
@@ -152,8 +177,8 @@ pub enum SendyError {
     Migration(#[from] MigrateError),
     #[error("A remote peer responded with an error message")]
     ResponseError,
-    #[error("Failed to handle certificate resource: {0}")]
-    Certificate(#[from] PeerCertificateHandleError),
+    #[error("Failed to handle resource: {0}")]
+    Resource(#[from] ResourceError),
     #[error("Failed to decode a value from received bytes: {0}")]
     FromBytes(#[from] FromBytesError),
 }

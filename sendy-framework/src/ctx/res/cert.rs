@@ -12,7 +12,7 @@ use crate::{
     Context, FromBytes, FromBytesError, ToBytes,
 };
 
-use super::{Resource, ResourceId, ResourceKind};
+use super::{Resource, ResourceId, ResourceKind, ResourceError};
 
 /// A query that may be submitted to lookup a peer's certificate
 #[derive(Debug, Clone, Copy, FromBytes, ToBytes)]
@@ -31,11 +31,9 @@ impl Resource for PeerCertificate {
     const RESOURCE_KIND: ResourceKind = ResourceKind::Certificate;
 
     type Query = PeerCertificateQuery;
-    type QueryError = PeerCertificateQueryError;
-    type HandleError = PeerCertificateHandleError;
 
     /// Get or generate the ID of the given resource
-    fn id(&self) -> Result<ResourceId<Self>, Self::HandleError> {
+    fn id(&self) -> Result<ResourceId<Self>, ResourceError> {
         Ok(ResourceId::new(self.cert.keychain.fingerprint()?))
     }
 
@@ -43,7 +41,7 @@ impl Resource for PeerCertificate {
     /// and potentially inserting a new value into the [Context]'s database.
     ///
     /// Must return a handle to the inserted resource
-    async fn handle(ctx: &Context, bytes: Bytes) -> Result<ResourceId<Self>, Self::HandleError> {
+    async fn handle(ctx: &Context, bytes: Bytes) -> Result<ResourceId<Self>, ResourceError> {
         let ((cert_bytes, cert), signature) =
             untrusted::Input::from(&bytes).read_all(FromBytesError::ExtraBytes, |mut rdr| {
                 let (bytes, cert) = UnsignedPeerCertificate::partial_decode(&mut rdr)?;
@@ -79,17 +77,17 @@ impl Resource for PeerCertificate {
 
                         Ok(ResourceId::new(fingerprint))
                     }
-                    Err(e) => Err(PeerCertificateHandleError::InvalidSignature(e).into()),
+                    Err(e) => Err(ResourceError::InvalidSignature(e)),
                 },
-                false => Err(PeerCertificateHandleError::Expired.into()),
+                false => Err(ResourceError::Expired),
             },
-            false => Err(PeerCertificateHandleError::InvalidTimestamp(cert.timestamp).into()),
+            false => Err(ResourceError::InvalidTimestamp(cert.timestamp)),
         }
     }
 
     /// Store a new instance of [Self] into the [Context]'s database, returning a handle to the
     /// inserted resource
-    async fn store(ctx: &Context, val: Self) -> Result<ResourceId<Self>, Self::HandleError> {
+    async fn store(ctx: &Context, val: Self) -> Result<ResourceId<Self>, ResourceError> {
         let fingerprint = val.cert.keychain.fingerprint()?;
 
         {
@@ -113,7 +111,7 @@ impl Resource for PeerCertificate {
     fn query_bytes<'c>(
         ctx: &'c Context,
         query: Self::Query,
-    ) -> BoxStream<'c, Result<Vec<u8>, Self::QueryError>> {
+    ) -> BoxStream<'c, Result<Vec<u8>, ResourceError>> {
         Box::pin(try_stream! {
             let mut builder = QueryBuilder::new("select data from certificates");
             let query = query.sql(&mut builder).build();
@@ -130,7 +128,7 @@ impl Resource for PeerCertificate {
     fn query_ids<'c>(
         ctx: &'c Context,
         query: Self::Query,
-    ) -> BoxStream<'c, Result<PeerCertificateId, Self::QueryError>> {
+    ) -> BoxStream<'c, Result<PeerCertificateId, ResourceError>> {
         Box::pin(try_stream! {
             let mut builder = QueryBuilder::new("select userid from certificates");
             let query = query.sql(&mut builder)
@@ -147,7 +145,7 @@ impl Resource for PeerCertificate {
     async fn fetch_bytes(
         ctx: &Context,
         id: PeerCertificateId,
-    ) -> Result<Vec<u8>, Self::QueryError> {
+    ) -> Result<Vec<u8>, ResourceError> {
         sqlx::query!(r#"select data from certificates where userid=?"#, id)
             .map(|v| v.data)
             .fetch_one(&ctx.db)
@@ -156,39 +154,7 @@ impl Resource for PeerCertificate {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum PeerCertificateQueryError {
-    #[error("Failed to decode a certificate from database: {0}")]
-    Decode(#[from] FromBytesError),
-    #[error("Failed to execute database operation: {0}")]
-    Sql(#[from] sqlx::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum PeerCertificateHandleError {
-    #[error("Failed to execute database operation: {0}")]
-    Sql(#[from] sqlx::Error),
-    #[error("Failed to decode a certificate from received bytes: {0}")]
-    Decode(#[from] FromBytesError),
-    #[error("Signature of self-signed certificate was invalid: {0}")]
-    InvalidSignature(#[from] signature::Error),
-    #[error("Invalid certificate timestamp {0} is in the future")]
-    InvalidTimestamp(chrono::DateTime<Utc>),
-    #[error("Certificate TTL has expired")]
-    Expired,
-    #[error("Failed to encode a value to bytes: {0}")]
-    Encode(#[from] crate::ToBytesError),
-}
-
 impl PeerCertificateQuery {
-    /// Get the tag to encode to bytes marking what kind of query this is
-    const fn tag(&self) -> u8 {
-        match self {
-            Self::Fingerprint(_) => 1,
-            Self::Datetime(_) => 2,
-        }
-    }
-
     /// Append an SQL condition to the given query builder that will filter results to match the
     /// query
     pub(crate) fn sql<'a, 'b>(
