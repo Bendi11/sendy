@@ -1,7 +1,7 @@
 //! Traits modelling a generic interface that all resources persisted by the network must conform
 //! to
 
-use std::{marker::PhantomData, fmt};
+use std::{marker::PhantomData, fmt, hash::Hash};
 
 use crate::{ToBytes, FromBytes, Context, FromBytesError, model::crypto::SHA256_HASH_LEN};
 use async_stream::try_stream;
@@ -22,7 +22,7 @@ pub enum ResourceKind {
 
 /// A 32-byte ID that uniquely identifies a resource by the hash of its contents
 pub struct ResourceId<R: Resource> {
-    hash: [u8 ; 32],
+    hash: [u8 ; SHA256_HASH_LEN],
     boo: PhantomData<R>,
 }
 
@@ -95,10 +95,28 @@ impl<R: Resource> ResourceId<R> {
             boo: PhantomData,
         }
     }
+    
+    /// Get a short version (last 4 least significant bytes) of this resource ID to be used for display in log messages
+    #[inline(always)]
+    pub const fn short<'a>(&'a self) -> impl fmt::Display + 'a {
+        struct ShortId<'a, R: Resource>(&'a ResourceId<R>);
+
+        impl<'a, R: Resource> fmt::Display for ShortId<'a, R> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                for byte in &self.0.hash[28..] {
+                    write!(f, "{:x}", byte)?
+                }
+
+                Ok(())
+            }
+        }
+
+        ShortId(self)
+    }
 }
 
 impl<R: Resource> ToBytes for ResourceId<R> {
-    fn encode<W: crate::ser::ByteWriter>(&self, buf: &mut W) -> Result<(), crate::ser::ToBytesError> {
+    fn encode<W: crate::ByteWriter>(&self, buf: &mut W) -> Result<(), crate::ToBytesError> {
         self.hash.encode(buf) 
     }
 
@@ -148,6 +166,18 @@ impl<'s, R: Resource> Decode<'s, Sqlite> for ResourceId<R> {
     }
 }
 
+impl<R: Resource> Hash for ResourceId<R> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.hash.hash(state)
+    }
+}
+impl<R: Resource> std::cmp::PartialEq for ResourceId<R> {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash.eq(&other.hash)
+    }
+}
+impl<R: Resource> std::cmp::Eq for ResourceId<R> {}
+
 impl<R: Resource> fmt::LowerHex for ResourceId<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.hash {
@@ -157,7 +187,6 @@ impl<R: Resource> fmt::LowerHex for ResourceId<R> {
         Ok(())
     }
 }
-
 impl<R: Resource> fmt::UpperHex for ResourceId<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.hash {

@@ -649,6 +649,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "derives"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.29",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1724,6 +1733,7 @@ dependencies = [
  "log",
  "parking_lot",
  "rsa",
+ "sendy-wireformat",
  "serde",
  "sha2",
  "signature",
@@ -1731,6 +1741,18 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
+ "untrusted",
+]
+
+[[package]]
+name = "sendy-wireformat"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "chrono",
+ "derives",
+ "rsa",
+ "thiserror",
  "untrusted",
 ]
 

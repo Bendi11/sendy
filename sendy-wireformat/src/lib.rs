@@ -11,9 +11,15 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
-use bytes::{Buf, BufMut, BytesMut};
+pub use untrusted::{self, Input, Reader, EndOfInput};
+pub use bytes::{self, Buf, BufMut, BytesMut};
 
+#[cfg(feature = "chrono")]
 mod time;
+#[cfg(feature = "rsa")]
+mod rsa;
+
+pub use derives::{ToBytes, FromBytes};
 
 
 // Extension trait for [BufMut], allowing custom behavior when a partial writes are required for
@@ -351,5 +357,3 @@ impl<const N: usize> FromBytes<'_> for [u8; N] {
         Ok(this)
     }
 }
-
-

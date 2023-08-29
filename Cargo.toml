@@ -1,5 +1,6 @@
 [workspace]
 members = [
     "sendy-framework",
+    "sendy-wireformat",
     "sendyterm"
 ]

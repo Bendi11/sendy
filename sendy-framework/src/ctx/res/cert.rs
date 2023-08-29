@@ -7,7 +7,7 @@ use rsa::pkcs1v15::Signature;
 use signature::Verifier;
 use sqlx::{Row, QueryBuilder, Sqlite};
 
-use crate::{model::cert::{PeerCertificate, UnsignedPeerCertificate}, FromBytesError, Context, FromBytes, ToBytes, ser::ByteWriter};
+use crate::{model::cert::{PeerCertificate, UnsignedPeerCertificate}, FromBytesError, Context, FromBytes, ToBytes, ByteWriter};
 
 use super::{Resource, ResourceKind, ResourceId};
 
@@ -165,7 +165,7 @@ pub enum PeerCertificateHandleError {
     #[error("Certificate TTL has expired")]
     Expired,
     #[error("Failed to encode a value to bytes: {0}")]
-    Encode(#[from] crate::ser::ToBytesError),
+    Encode(#[from] crate::ToBytesError),
 }
 
 impl PeerCertificateQuery {
@@ -188,7 +188,7 @@ impl PeerCertificateQuery {
 }
 
 impl ToBytes for PeerCertificateQuery {
-    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), crate::ser::ToBytesError> {
+    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), crate::ToBytesError> {
         self.tag().encode(buf)?;
         match self {
             Self::Fingerprint(f) => f.encode(buf),

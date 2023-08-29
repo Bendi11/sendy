@@ -26,6 +26,7 @@ async-stream = "0.3"
 
 log = "0.4"
 
+sendy-wireformat = { path = "../sendy-wireformat", features = ["rsa", "chrono"] }
 untrusted = "0.9"
 thiserror = "1.0"
 hibitset = { version = "0.6", default-features = false }

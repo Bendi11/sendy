@@ -22,7 +22,7 @@ use crate::{
         packet::{PacketHeader, BLOCK_SIZE, HEADER_SZ},
         PacketKind,
     },
-    ser::{FromBytes, FromBytesError},
+    FromBytes, FromBytesError,
 };
 
 use super::{
@@ -30,14 +30,12 @@ use super::{
     ReliableSocket, SocketConfig,
 };
 
-type TokioMutex<T> = tokio::sync::Mutex<T>;
-
 /// State required for a reliable socket's reception arm
 #[derive(Debug)]
 pub(crate) struct ReliableSocketRecv {
     /// A map of message IDs from the given IP addresses and message IDs to the channel to send the
     /// message response to when received
-    pub responses: DashMap<(IpAddr, NonZeroU8), oneshot::Sender<Bytes>>,
+    pub responses: DashMap<(IpAddr, NonZeroU8), oneshot::Sender<Result<Bytes, Bytes>>>,
     /// A semaphore with [max_recv_mem](crate::net::sock::SocketConfig::max_recv_mem) permits
     /// available, one permit is equal to one byte
     pub recv_buf_permit: Arc<Semaphore>,
@@ -244,7 +242,10 @@ impl ReliableSocket {
         }
 
         let blockid = match header.kind {
-            PacketKind::Respond => {
+            PacketKind::RespondOk |
+                PacketKind::RespondErr |
+                PacketKind::Conn |
+                PacketKind::Advertise => {
                 // We already received the new message packet
                 if self
                     .recv
@@ -259,7 +260,7 @@ impl ReliableSocket {
                 };
 
                 //No task is waiting for a response message that was sent
-                if header.kind == PacketKind::Respond
+                if header.kind.is_response()
                     && !self
                         .recv
                         .responses
@@ -279,7 +280,7 @@ impl ReliableSocket {
 
                 0
             }
-            PacketKind::Ack | PacketKind::Conn | PacketKind::Transfer => header.id.blockid,
+            PacketKind::Ack | PacketKind::Transfer => header.id.blockid,
         };
 
         let messages = self.recv.messages.read().await;
@@ -352,9 +353,15 @@ impl ReliableSocket {
             };
 
             match finished.kind {
-                PacketKind::Respond => {
+                PacketKind::RespondOk | PacketKind::RespondErr => {
+                    let is_ok = finished.kind == PacketKind::RespondOk;
                     match self.recv.responses.remove(&(addr.ip(), finished.msg_id)) {
                         Some((_, response)) => {
+                            let payload = match is_ok {
+                                true => Ok(payload),
+                                false => Err(payload),
+                            };
+
                             if let Err(_) = response.send(payload) {
                                 log::error!("Failed to send response bytes to listener");
                             }

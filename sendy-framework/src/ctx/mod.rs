@@ -1,5 +1,6 @@
 use std::net::Ipv4Addr;
 use std::{sync::Arc, net::SocketAddr};
+use dashmap::DashMap;
 use signature::Signer;
 
 use chrono::{Utc, Duration};
@@ -8,12 +9,14 @@ use sqlx::SqlitePool;
 use crate::model::cert::{PeerCertificate, UnsignedPeerCertificate, PeerCapabilities};
 use crate::{SocketConfig, ToBytes};
 use crate::model::crypto::PrivateKeychain;
-use crate::sock::ReliableSocket;
+use crate::sock::{ReliableSocket, PacketKind, ReliableSocketTransmitter};
 
 mod handle;
 pub mod res;
 
 pub use res::Resource;
+
+use self::res::cert::{PeerCertificateHandleError, PeerCertificateId};
 
 /// The main interface for interacting with the Sendy network - contains state for all peer
 /// connections and resource persistence
@@ -21,12 +24,23 @@ pub use res::Resource;
 pub struct Context {
     /// Manager for all lower-level UDP operations
     socks: ReliableSocket,
+    /// Connected and authenticated peers
+    pub(crate) peers: DashMap<SocketAddr, Peer>,
     /// Keychain used to sign and encrypt messages
     pub(crate) keychain: PrivateKeychain,
     /// Signed certificate for our keys
     pub(crate) certificate: PeerCertificate,
     /// Connection to an sqlite database used to store all resources
     pub(crate) db: SqlitePool,
+}
+
+/// An authenticated connection to a remote peer
+#[derive(Debug)]
+pub(crate) struct Peer {
+    /// ID of the certificate for this peer
+    pub cert: PeerCertificateId,
+    /// Flow control state used to transmit packets to the peer
+    pub tx: ReliableSocketTransmitter,
 }
 
 
@@ -66,16 +80,21 @@ impl Context {
             }
         };
 
-        let this = Arc::new(Self { socks, keychain, certificate: certificate.clone(), db });
+        let this = Arc::new(Self {
+            socks,
+            peers: DashMap::new(),
+            keychain,
+            certificate: certificate.clone(),
+            db,
+        });
 
 
         let id = PeerCertificate::store(&this, certificate).await.unwrap();
-        log::trace!("ID is {:x}", id);
+        log::trace!("ID is {}", id.short());
 
         log::trace!("signature is {:x}", PeerCertificate::fetch(&this, id).await.unwrap().signature);
 
         Ok(this)
-
     }
 
     /// Listen for incoming connections on the given port
@@ -85,9 +104,40 @@ impl Context {
     }
     
     /// Connect to the peer at the given IP address and port
-    pub async fn connect(&self, peer: SocketAddr) -> std::io::Result<()> {
-        let tx = self.socks.create_transmitter(peer).await?;
+    pub async fn connect(&self, addr: SocketAddr) -> Result<(), ConnectError> {
+        if self.peers.contains_key(&addr) {
+            return Ok(())
+        }
+
+        let tx = self.socks.create_transmitter(addr).await?;
+
+        log::trace!("Transmitted certificate");
+
+        let resp = self
+            .socks
+            .send_wait_response(&tx, PacketKind::Conn, &self.certificate)
+            .await?;
+
+        let bytes = resp.await;
+
+        let cert = PeerCertificate::handle(self, bytes).await?;
+
+        let peer = Peer {
+            tx,
+            cert: cert.clone(),
+        };
+
+        self.peers.insert(addr, peer);
 
         Ok(())
     }
+}
+
+/// Errors that may occur when connecting to a remote peer
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectError {
+    #[error("I/O error: {0}")]
+    IO(#[from] std::io::Error),
+    #[error("Failed to handle certificate resource: {0}")]
+    Certificate(#[from] PeerCertificateHandleError),
 }

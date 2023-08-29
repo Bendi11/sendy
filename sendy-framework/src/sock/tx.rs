@@ -16,7 +16,7 @@ use tokio::{
     sync::{oneshot, Notify, Semaphore},
 };
 
-use crate::ser::{ByteWriter, FromBytes, ToBytes};
+use crate::{ByteWriter, FromBytes, ToBytes};
 
 use super::{
     packet::{
@@ -78,8 +78,8 @@ impl ReliableSocket {
         &self,
         conn: &ReliableSocketTransmitter,
         kind: PacketKind,
-        req: B,
-    ) -> std::io::Result<impl Future<Output = Bytes>> {
+        req: &B,
+    ) -> std::io::Result<impl Future<Output = Result<Bytes, Bytes>>> {
         let msgid = conn.next_message_id();
         let recv = self.wait_response(conn.remote.ip(), msgid);
         self.send_with_id(conn, msgid, kind, req).await?;
@@ -100,7 +100,7 @@ impl ReliableSocket {
         &self,
         conn: &ReliableSocketTransmitter,
         kind: PacketKind,
-        msg: B,
+        msg: &B,
     ) -> std::io::Result<()> {
         let id = conn.next_message_id();
         self.send_with_id(conn, id, kind, msg).await
@@ -114,10 +114,12 @@ impl ReliableSocket {
         conn: &ReliableSocketTransmitter,
         id: NonZeroU8,
         kind: PacketKind,
-        msg: B,
+        msg: &B,
     ) -> std::io::Result<()> {
         let mut splitter = MessageSplitter::new(kind, id);
-        msg.encode(&mut splitter);
+        msg
+            .encode(&mut splitter)
+            .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
         let mut pkts = splitter
             .into_packet_iter()
             .map(|(id, pkt)| self.send_wait_ack(conn, id, pkt));
@@ -146,8 +148,8 @@ impl ReliableSocket {
     }
 
     /// Wait for the peer to send a response to an already-sent message identified by `msgid`
-    fn wait_response(&self, from: IpAddr, msgid: NonZeroU8) -> oneshot::Receiver<Bytes> {
-        let (tx, rx) = oneshot::channel::<Bytes>();
+    fn wait_response(&self, from: IpAddr, msgid: NonZeroU8) -> oneshot::Receiver<Result<Bytes, Bytes>> {
+        let (tx, rx) = oneshot::channel::<Result<Bytes, Bytes>>();
         self.recv.responses.insert((from, msgid), tx);
         rx
     }
@@ -168,13 +170,16 @@ impl ReliableSocket {
         //Don't waste time writing nothing and calculating the checksum if there is no payload
         let checksum = {
             buf.put_slice(&[0u8; HEADER_SZ]);
-            msg.encode(&mut buf);
+            msg.encode(&mut buf)
+                .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
             crc32fast::hash(&buf[HEADER_SZ..])
         };
 
         let header = PacketHeader { kind, id, checksum };
 
-        header.encode(&mut buf);
+        header
+            .encode(&mut buf)
+            .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
 
         let sock = self.get_sock(addr.port())?;
         sock.send_to(&buf, addr).await?;

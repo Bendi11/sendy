@@ -2,7 +2,7 @@ use std::{fmt, num::NonZeroU8};
 
 use bytes::BufMut;
 
-use crate::ser::{ByteWriter, FromBytes, FromBytesError, ToBytes, ToBytesError};
+use crate::{ByteWriter, FromBytes, FromBytesError, ToBytes, ToBytesError};
 
 /// 'minimum maximum reassembly buffer size' guaranteed to be deliverable, minus IP and UDP headers
 pub(crate) const MAX_SAFE_UDP_PAYLOAD: usize = 500;
@@ -64,7 +64,12 @@ pub enum PacketKind {
     Transfer = 2,
     /// Signals that the following payload bytes are the response to a request made by the message
     /// ID of the respond packet's header
-    Respond = 3,
+    RespondOk = 3,
+    /// Signals that the following payload bytes are an error response to a request made by the
+    /// message ID of the respond packet's header
+    RespondErr = 4,
+    /// Advertises the possession of resources to other nodes on the network
+    Advertise = 5,
 }
 
 impl ToBytes for PacketId {
@@ -119,6 +124,14 @@ impl PacketKind {
             _ => false,
         }
     }
+    
+    /// Check if this packet tag is a response to another message
+    pub const fn is_response(&self) -> bool {
+        match self {
+            Self::RespondOk | Self::RespondErr => true,
+            _ => false,
+        }
+    }
 }
 
 impl FromBytes<'_> for PacketKind {
@@ -128,7 +141,9 @@ impl FromBytes<'_> for PacketKind {
             0 => Self::Conn,
             1 => Self::Ack,
             2 => Self::Transfer,
-            3 => Self::Respond,
+            3 => Self::RespondOk,
+            4 => Self::RespondErr,
+            5 => Self::Advertise,
             _ => {
                 return Err(FromBytesError::Parsing(format!(
                     "Invalid packet kind tag {:X}",
@@ -145,7 +160,9 @@ impl ToBytes for PacketKind {
             Self::Conn => 0,
             Self::Ack => 1,
             Self::Transfer => 2,
-            Self::Respond => 3,
+            Self::RespondOk => 3,
+            Self::RespondErr => 4,
+            Self::Advertise => 5,
         };
         buf.put_u8(v);
         Ok(())

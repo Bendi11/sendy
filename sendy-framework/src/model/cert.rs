@@ -6,7 +6,7 @@ use bitflags::bitflags;
 use chrono::{DateTime, Duration, Utc};
 use rsa::{pkcs1v15::Signature, signature::SignatureEncoding};
 
-use crate::{FromBytes, ToBytes, ser::{ByteWriter, ToBytesError}, FromBytesError};
+use crate::{FromBytes, ToBytes, ByteWriter, ToBytesError, FromBytesError};
 
 use super::crypto::PublicKeychain;
 
@@ -114,19 +114,4 @@ impl FromBytes<'_> for PeerCapabilities {
     }
 }
 
-impl ToBytes for Signature {
-    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
-        self.to_bytes().as_ref().encode(buf)
-    }
 
-    fn size_hint(&self) -> usize {
-        self.encoded_len()
-    }
-}
-impl<'a> FromBytes<'a> for Signature {
-    fn decode(reader: &mut untrusted::Reader<'a>) -> Result<Self, FromBytesError> {
-        let buf = <&[u8]>::decode(reader)?;
-        Self::try_from(buf)
-            .map_err(|e| FromBytesError::Parsing(format!("Failed to parse encoded signature: {}", e)))
-    }
-}

@@ -1,0 +1,15 @@
+[package]
+name = "sendy-wireformat"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+derives = { path = "./derives" }
+
+untrusted = "0.9"
+bytes = "1.4"
+thiserror = "1.0"
+
+
+chrono = { version = "0.4", optional = true }
+rsa = { version = "0.9", default-features = false, features = ["sha2", "u64_digit"], optional = true }

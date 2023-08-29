@@ -6,12 +6,12 @@
 //! All operations can be accessed by the [Context] struct, which should be wrapped in an `Arc`
 
 pub(crate) mod sock;
-pub(crate) mod ser;
 pub(crate) mod msg;
 pub(crate) mod ctx;
 
 pub mod model;
 pub use sock::SocketConfig;
 pub use rsa;
-pub use ser::{FromBytes, FromBytesError, ToBytes};
 pub use ctx::Context;
+
+pub use sendy_wireformat::{ByteWriter, ToBytes, FromBytes, ToBytesError, FromBytesError};
