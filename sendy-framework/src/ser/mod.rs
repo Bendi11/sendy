@@ -13,9 +13,7 @@ use std::{
 
 use bytes::{Buf, BufMut, BytesMut};
 
-mod util;
 mod time;
-pub use util::*;
 
 
 // Extension trait for [BufMut], allowing custom behavior when a partial writes are required for

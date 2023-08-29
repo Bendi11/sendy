@@ -15,7 +15,6 @@ impl ToBytes for chrono::DateTime<Utc> {
         self.timestamp().size_hint()
     }
 }
-
 impl FromBytes<'_> for chrono::DateTime<Utc> {
     fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         let ts = i64::decode(reader)?;
