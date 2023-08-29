@@ -1,4 +1,6 @@
 /target
 /sendy-framework/.generated
 /.env
-/.db
+/*.db
+/*.db-shm
+/*.db-wal
