@@ -94,6 +94,14 @@ pub trait FromBytes<'a>: Sized + 'a {
         Self::partial_decode(&mut reader)
             .map(|(buf, v)| (buf.as_slice_less_safe(), v)) 
     }
+    
+    /// Read an instance of `Self` from the given slice, with the additional requirement that no
+    /// trailing bytes should be present in the input buffer even if parsing succeeded
+    fn full_decode_from_slice(slice: &'a [u8]) -> Result<Self, FromBytesError> {
+        let input = untrusted::Input::from(slice);
+        input
+            .read_all(FromBytesError::ExtraBytes, Self::decode)
+    }
 }
 
 macro_rules! integral_from_to_bytes {

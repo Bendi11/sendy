@@ -49,7 +49,7 @@ fn derive_tobytes_enum(ident: Ident, attr: &[Attribute], data: DataEnum) -> Toke
             let (name, ty) = field_rawname_type_iter(variant.fields.iter());
 
             quote! {
-                #( <#ty as ::sendy_wireformat::ToBytes>::size_hint(&#name) + )*
+                #( + <#ty as ::sendy_wireformat::ToBytes>::size_hint(&#name) )*
             }
         });
 
@@ -69,7 +69,7 @@ fn derive_tobytes_enum(ident: Ident, attr: &[Attribute], data: DataEnum) -> Toke
 
             fn size_hint(&self) -> usize {
                 match self {
-                    #( Self::#variant_match2 => 0 + #impl_variant_size <u8 as ::sendy_wireformat::ToBytes>::size_hint(&#discriminant) ),*
+                    #( Self::#variant_match2 => <u8 as ::sendy_wireformat::ToBytes>::size_hint(&#discriminant) #impl_variant_size ),*
                 }
             }
         }

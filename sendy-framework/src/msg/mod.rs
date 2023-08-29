@@ -1,6 +1,6 @@
 //! Definitions for all messages that may be exchanged between peers
 
-mod conn;
+pub mod conn;
 
 use crate::{sock::PacketKind, ToBytes, FromBytes};
 

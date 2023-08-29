@@ -18,13 +18,15 @@ pub struct ConnResponseOk {
 }
 
 /// A response when a peer refused a [Conn] message with reason for connection termination attached
-#[derive(Debug, ToBytes, FromBytes)]
+#[derive(Debug, ToBytes, FromBytes, thiserror::Error)]
 #[repr(u8)]
 pub enum ConnResponseErr {
-    /// The received certificate had an invalid signature for the public key in the certificate
-    InvalidCertificateSignature { a: i32 } = 0,
-    /// The received certificate was expired
+    #[error("Certificate signature is invalid for the public key given in the certificate")]
+    InvalidCertificateSignature = 0,
+    #[error("The received certificate has expired")]
     ExpiredCertificate = 1,
+    #[error("Unable to process the signature for an unknown reason")]
+    Unknown = 255,
 }
 
 impl Message for Conn {

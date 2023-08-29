@@ -1,12 +1,33 @@
-use crate::{Context, sock::{FinishedMessage, PacketKind}, msg::{Conn, Message}, model::cert::PeerCertificate, FromBytesError, ctx::{res::{Resource, cert::PeerCertificateHandleError}, Peer}};
+use crate::{Context, sock::{FinishedMessage, PacketKind}, msg::conn::ConnResponseErr, model::cert::PeerCertificate, FromBytesError, ctx::{res::{Resource, cert::PeerCertificateHandleError}, Peer, SendyError}};
 
 impl Context {
     /// Handle a received message from another peer
-    async fn handle_message(&self, msg: FinishedMessage) -> Result<(), HandleMessageError> {
+    async fn handle_message(&self, msg: FinishedMessage) -> Result<(), SendyError> {
         match msg.kind {
             PacketKind::Conn => {
-                let cert = PeerCertificate::handle(self, msg.payload).await?;
-                log::trace!("Got certificate {}", cert.short());
+                let cert = match PeerCertificate::handle(self, msg.payload).await {
+                    Ok(cert) => cert,
+                    Err(e) => {
+                        log::error!("Error when receiving peer certificate from CONN message: {}", e);
+
+                        let resp = match e {
+                            PeerCertificateHandleError::InvalidSignature(_) => ConnResponseErr::InvalidCertificateSignature,
+                            PeerCertificateHandleError::Expired => ConnResponseErr::ExpiredCertificate,
+                            _ => ConnResponseErr::Unknown,
+                        };
+
+                        let tmp_tx = self.socks.create_transmitter(msg.from).await?;
+
+                        self
+                            .socks
+                            .send_with_id(&tmp_tx, msg.id, PacketKind::RespondErr, &resp).await?;
+
+
+                        return Err(SendyError::Certificate(e));
+                    }
+                };
+
+                log::trace!("Got valid certificate {} from {}", cert.short(), msg.from);
                 
                 let tx = self.socks.create_transmitter(msg.from).await?;
 

@@ -4,7 +4,7 @@ use std::net::IpAddr;
 
 use bitflags::bitflags;
 use chrono::{DateTime, Duration, Utc};
-use rsa::{pkcs1v15::Signature, signature::SignatureEncoding};
+use rsa::pkcs1v15::Signature;
 
 use crate::{FromBytes, ToBytes, ByteWriter, ToBytesError, FromBytesError};
 

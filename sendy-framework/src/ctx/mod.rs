@@ -1,13 +1,15 @@
 use std::net::Ipv4Addr;
 use std::{sync::Arc, net::SocketAddr};
 use dashmap::DashMap;
+use sendy_wireformat::FromBytesError;
 use signature::Signer;
 
 use chrono::{Utc, Duration};
 use sqlx::SqlitePool;
 
 use crate::model::cert::{PeerCertificate, UnsignedPeerCertificate, PeerCapabilities};
-use crate::{SocketConfig, ToBytes};
+use crate::msg::conn::ConnResponseErr;
+use crate::{SocketConfig, ToBytes, FromBytes};
 use crate::model::crypto::PrivateKeychain;
 use crate::sock::{ReliableSocket, PacketKind, ReliableSocketTransmitter};
 
@@ -104,7 +106,7 @@ impl Context {
     }
     
     /// Connect to the peer at the given IP address and port
-    pub async fn connect(&self, addr: SocketAddr) -> Result<(), ConnectError> {
+    pub async fn connect(&self, addr: SocketAddr) -> Result<(), SendyError> {
         if self.peers.contains_key(&addr) {
             return Ok(())
         }
@@ -118,9 +120,14 @@ impl Context {
             .send_wait_response(&tx, PacketKind::Conn, &self.certificate)
             .await?;
 
-        let bytes = resp.await;
-
-        let cert = PeerCertificate::handle(self, bytes).await?;
+        let cert = match resp.await {
+            Ok(response) => PeerCertificate::handle(self, response).await?,
+            Err(reason) => {
+                let err =  ConnResponseErr::full_decode_from_slice(&reason)?;
+                log::error!("Failed to connect to remote {addr}: {err}");
+                return Err(SendyError::ResponseError)
+            }
+        };
 
         let peer = Peer {
             tx,
@@ -133,11 +140,15 @@ impl Context {
     }
 }
 
-/// Errors that may occur when connecting to a remote peer
+/// Errors that may occur when executing operations over the sendy network
 #[derive(Debug, thiserror::Error)]
-pub enum ConnectError {
+pub enum SendyError {
     #[error("I/O error: {0}")]
     IO(#[from] std::io::Error),
+    #[error("A remote peer responded with an error message")]
+    ResponseError,
     #[error("Failed to handle certificate resource: {0}")]
     Certificate(#[from] PeerCertificateHandleError),
+    #[error("Failed to decode a value from received bytes: {0}")]
+    FromBytes(#[from] FromBytesError),
 }

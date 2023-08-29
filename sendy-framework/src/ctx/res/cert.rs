@@ -7,17 +7,18 @@ use rsa::pkcs1v15::Signature;
 use signature::Verifier;
 use sqlx::{Row, QueryBuilder, Sqlite};
 
-use crate::{model::cert::{PeerCertificate, UnsignedPeerCertificate}, FromBytesError, Context, FromBytes, ToBytes, ByteWriter};
+use crate::{model::cert::{PeerCertificate, UnsignedPeerCertificate}, FromBytesError, Context, FromBytes, ToBytes};
 
 use super::{Resource, ResourceKind, ResourceId};
 
 /// A query that may be submitted to lookup a peer's certificate
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, FromBytes, ToBytes)]
+#[repr(u8)]
 pub enum PeerCertificateQuery {
     /// Lookup the certificate of a peer by their public-key fingerprint
-    Fingerprint(PeerCertificateId),
+    Fingerprint(PeerCertificateId) = 1,
     /// Lookup a number of certificates of a peer by the published datetime of their certificate
-    Datetime(DateTime<Utc>),
+    Datetime(DateTime<Utc>) = 2,
 }
 
 pub type PeerCertificateId = ResourceId<PeerCertificate>;
@@ -183,32 +184,6 @@ impl PeerCertificateQuery {
         match self {
             Self::Fingerprint(f) => query.push(" where userid= ").push_bind(f),
             Self::Datetime(dt) => query.push(" where creation_timestamp>=").push_bind(dt)
-        }
-    }
-}
-
-impl ToBytes for PeerCertificateQuery {
-    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), crate::ToBytesError> {
-        self.tag().encode(buf)?;
-        match self {
-            Self::Fingerprint(f) => f.encode(buf),
-            Self::Datetime(dt) => dt.encode(buf),
-        }
-    }
-
-    fn size_hint(&self) -> usize {
-        self.tag().size_hint()
-    }
-}
-
-impl<'a> FromBytes<'a> for PeerCertificateQuery {
-    fn decode(reader: &mut untrusted::Reader<'a>) -> Result<Self, FromBytesError> {
-        let tag = u8::decode(reader)?;
-
-        match tag {
-            1 => PeerCertificateId::decode(reader).map(Self::Fingerprint),
-            2 => DateTime::<Utc>::decode(reader).map(Self::Datetime),
-            other => Err(FromBytesError::Parsing(format!("Failed to decode peer certificate query: invalid query tag {:X}", other))),
         }
     }
 }
