@@ -38,6 +38,12 @@ impl ToBytes for VerifyingKey<Sha256> {
         self.as_ref().encode(buf)
     }
 }
+impl FromBytes<'_> for VerifyingKey<Sha256> {
+    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
+        let key = RsaPublicKey::decode(reader)?;
+        Ok(Self::from(key))
+    }
+}
 
 /// Format: same as Vec<u8>, body is DER encoded key material
 impl ToBytes for RsaPublicKey {

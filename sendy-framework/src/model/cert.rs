@@ -12,7 +12,7 @@ use super::crypto::PublicKeychain;
 
 /// A peer's certificate that is meant to fully introduce one peer to another, without the
 /// accompanying signature
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, ToBytes, FromBytes)]
 pub struct UnsignedPeerCertificate {
     /// The public keys used to verify the authenticity of messages sent by this peer and encrypt
     /// messages meant for this peer
@@ -29,7 +29,7 @@ pub struct UnsignedPeerCertificate {
     pub ttl: Duration,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, ToBytes, FromBytes)]
 pub struct PeerCertificate {
     pub(crate) cert: UnsignedPeerCertificate,
     pub(crate) signature: Signature,
@@ -40,66 +40,6 @@ bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct PeerCapabilities: u16 {
         
-    }
-}
-
-impl ToBytes for UnsignedPeerCertificate {
-    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
-        self.keychain.encode(buf)?;
-        self.capabilities.encode(buf)?;
-        self.username.encode(buf)?;
-        self.sockaddr.encode(buf)?;
-        self.timestamp.encode(buf)?;
-        self.ttl.encode(buf)?;
-
-        Ok(())
-    }
-
-    fn size_hint(&self) -> usize {
-        self.keychain.size_hint() +
-        self.capabilities.size_hint() +
-        self.username.size_hint() +
-        self.sockaddr.size_hint() +
-        self.timestamp.size_hint() +
-        self.ttl.size_hint()
-    }
-}
-impl FromBytes<'_> for UnsignedPeerCertificate {
-    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let keychain = PublicKeychain::decode(reader)?;
-        let capabilities = PeerCapabilities::decode(reader)?;
-        let username = String::decode(reader)?;
-        let sockaddr = IpAddr::decode(reader)?;
-        let timestamp = DateTime::<Utc>::decode(reader)?;
-        let ttl = Duration::decode(reader)?;
-
-        Ok(Self {
-            keychain,
-            capabilities,
-            username,
-            sockaddr,
-            timestamp,
-            ttl,
-        })
-    }
-}
-impl ToBytes for PeerCertificate {
-    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
-        self.cert.encode(buf)?;
-        self.signature.encode(buf)?;
-
-        Ok(())
-    }
-
-    fn size_hint(&self) -> usize {
-        self.cert.size_hint() + self.signature.size_hint()
-    }
-}
-impl FromBytes<'_> for PeerCertificate {
-    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let cert = UnsignedPeerCertificate::decode(reader)?;
-        let signature = Signature::decode(reader)?;
-        Ok(Self { cert, signature })
     }
 }
 

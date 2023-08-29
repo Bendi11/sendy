@@ -6,21 +6,20 @@ use digest::Digest;
 
 use rsa::{
     pkcs1v15::{SigningKey, VerifyingKey},
-    pkcs8::{der::Decode, EncodePrivateKey, EncodePublicKey, DecodePublicKey, PrivateKeyInfo},
     RsaPrivateKey, RsaPublicKey,
 };
 use sha2::Sha256;
 
 use crate::{
-    ByteWriter, ToBytesError,
-    FromBytes, FromBytesError, ToBytes,
+    ToBytesError,
+    FromBytes, ToBytes,
 };
 
 /// Length of an SHA256 hash in bytes
 pub const SHA256_HASH_LEN: usize = 32;
 
 /// Public authentication and encryption keys
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, ToBytes, FromBytes)]
 pub struct PublicKeychain {
     /// Key used to verify message signatures
     pub verification: VerifyingKey<Sha256>,
@@ -66,27 +65,3 @@ impl PublicKeychain {
         Ok(hash.finalize().into())
     }
 }
-
-impl ToBytes for PublicKeychain {
-    fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), ToBytesError> {
-        self.verification.encode(buf)?;
-        self.encryption.encode(buf)?;
-        Ok(())
-    }
-
-    fn size_hint(&self) -> usize {
-        self.verification.size_hint() + self.encryption.size_hint()
-    }
-}
-impl FromBytes<'_> for PublicKeychain {
-    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
-        let verification = RsaPublicKey::decode(reader)?;
-        let encryption = RsaPublicKey::decode(reader)?;
-        Ok(Self {
-            verification: verification.into(),
-            encryption,
-        })
-    }
-}
-
-
