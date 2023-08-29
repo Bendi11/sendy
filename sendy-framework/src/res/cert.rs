@@ -34,7 +34,7 @@ impl Resource for PeerCertificate {
 
     /// Get or generate the ID of the given resource
     fn id(&self) -> ResourceId<Self> {
-        ResourceId::new([0 ; 32])
+        ResourceId::new(self.cert.keychain.fingerprint())
     }
     
     /// Handle the reception of a new instance of this resource, performing all needed validation
@@ -59,18 +59,22 @@ impl Resource for PeerCertificate {
             true => match cert.timestamp + cert.ttl >= now {
                 true => match cert.keychain.verification.verify(cert_bytes.as_slice_less_safe(), &signature) {
                     Ok(_) => {
-                        let fingerprint = &cert.keychain.fingerprint() as &[u8];
-                        let ttl = cert.ttl.num_seconds();
-                        let data = bytes.as_ref();
-                        sqlx::query!(
-                            "insert into certificates (userid, creation_timestamp, ttl, data) values (?, ?, ?, ?);",
-                            fingerprint,
-                            cert.timestamp,
-                            ttl,
-                            data,
-                        ).execute(&ctx.db).await;
+                        let fingerprint = cert.keychain.fingerprint();
+                        
+                        {
+                            let fingerprint = fingerprint.as_slice();
+                            let ttl = cert.ttl.num_seconds();
+                            let data = bytes.as_ref();
+                            sqlx::query!(
+                                "insert into certificates (userid, creation_timestamp, ttl, data) values (?, ?, ?, ?);",
+                                fingerprint,
+                                cert.timestamp,
+                                ttl,
+                                data,
+                            ).execute(&ctx.db).await?;
+                        }
 
-                        Ok(ResourceId::new([0 ; 32]))
+                        Ok(ResourceId::new(fingerprint))
                     },
                     Err(e) => Err(PeerCertificateHandleError::InvalidSignature(e).into()),
                 },
@@ -185,7 +189,7 @@ impl PeerCertificateQuery {
 
 impl ToBytes for PeerCertificateQuery {
     fn encode<W: ByteWriter>(&self, buf: &mut W) -> Result<(), crate::ser::ToBytesError> {
-        self.tag().encode(buf);
+        self.tag().encode(buf)?;
         match self {
             Self::Fingerprint(f) => f.encode(buf),
             Self::Datetime(dt) => dt.encode(buf),
