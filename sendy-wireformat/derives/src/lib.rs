@@ -42,19 +42,35 @@ fn derive_tobytes_enum(ident: Ident, attr: &[Attribute], data: DataEnum) -> Toke
             }
         });
 
+    let impl_variant_size = data
+        .variants
+        .iter()
+        .map(|variant| {
+            let (name, ty) = field_rawname_type_iter(variant.fields.iter());
+
+            quote! {
+                #( <#ty as ::sendy_wireformat::ToBytes>::size_hint(&#name) + )*
+            }
+        });
+
+
     let implementation = quote! {
         impl ::sendy_wireformat::ToBytes for #ident {
             fn encode<B: ::sendy_wireformat::ByteWriter>(&self, buf: &mut B) -> ::core::result::Result<(), ::sendy_wireformat::ToBytesError> {
-                let tag: u8 = match self {
-                    #( Self::#variant_match => #discriminant ),*
-                };
-
-                <u8 as ::sendy_wireformat::ToBytes>::encode(&tag, buf)?;
                 match self {
-                    #( Self::#variant_match2 => {#impl_variant}),*
+                    #( Self::#variant_match => {
+                        <u8 as ::sendy_wireformat::ToBytes>::encode(&#discriminant, buf)?;
+                        #impl_variant
+                    }),*
                 }
 
-                Ok(())
+                Ok(()) 
+            }
+
+            fn size_hint(&self) -> usize {
+                match self {
+                    #( Self::#variant_match2 => 0 + #impl_variant_size <u8 as ::sendy_wireformat::ToBytes>::size_hint(&#discriminant) ),*
+                }
             }
         }
     };
