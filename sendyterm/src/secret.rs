@@ -133,7 +133,13 @@ mod secserv {
                 }
             }
 
-            let auth_key = keys.authentication.as_ref().encode_to_vec();
+            let auth_key = match keys.authentication.as_ref().encode_to_vec() {
+                Ok(v) => v,
+                Err(e) => {
+                    log::error!("Failed to encode authentication key: {}", e);
+                    return;
+                }
+            };
             if let Err(e) = collection
                 .create_item(
                     Self::AUTHENTICATION_KEY_LABEL,
@@ -148,7 +154,13 @@ mod secserv {
                 return;
             }
 
-            let enc_key = keys.decryption.encode_to_vec();
+            let enc_key = match keys.decryption.encode_to_vec() {
+                Ok(v) => v,
+                Err(e) => {
+                    log::error!("Failed to encode decryption key: {}", e);
+                    return;
+                }
+            };
             if let Err(e) = collection
                 .create_item(
                     Self::ENCRYPTION_KEY_LABEL,

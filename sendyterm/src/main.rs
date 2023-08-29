@@ -45,8 +45,6 @@ pub enum CliCommand {
         username: String,
         #[arg(
             index = 1,
-            short = 'p',
-            long = "hostip",
             help = "Public IP address of the local host"
         )]
         publicip: Ipv4Addr,
@@ -130,8 +128,8 @@ async fn main() {
                     PrivateKeychain::new(signature.into(), encrypt)
                 }
             };
-
-            let ctx = Context::new(keychain, SocketConfig::default(), "USER".to_owned());
+            
+            let ctx = Context::new(keychain, SocketConfig::default(), "USER".to_owned()).await.unwrap();
 
             for port in ports {
                 if let Err(e) = ctx.listen(port).await {

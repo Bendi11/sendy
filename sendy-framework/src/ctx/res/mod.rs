@@ -1,16 +1,16 @@
 //! Traits modelling a generic interface that all resources persisted by the network must conform
 //! to
 
-use std::{marker::PhantomData, pin::Pin, fmt};
+use std::{marker::PhantomData, fmt};
 
 use crate::{ToBytes, FromBytes, Context, FromBytesError, model::crypto::SHA256_HASH_LEN};
 use async_stream::try_stream;
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures::{Stream, StreamExt, stream::BoxStream};
+use futures::stream::BoxStream;
 use sqlx::{Sqlite, Encode, Decode};
 
-mod cert;
+pub mod cert;
 
 /// Tag that can identify the kind of resource that a generic resource ID is referencing
 #[repr(u8)]
@@ -42,7 +42,7 @@ pub trait Resource: ToBytes + for<'a> FromBytes<'a> {
     type QueryError: std::error::Error + From<FromBytesError>;
     
     /// Get or generate the ID of the given resource
-    fn id(&self) -> ResourceId<Self>;
+    fn id(&self) -> Result<ResourceId<Self>, Self::HandleError>;
     
     /// Handle the reception of a new instance of this resource, performing all needed validation
     /// and potentially inserting a new value into the [Context]'s database.
@@ -145,5 +145,25 @@ impl<'s, R: Resource> Decode<'s, Sqlite> for ResourceId<R> {
             .map(|buf| <[u8 ; SHA256_HASH_LEN]>::try_from(buf).map(Self::new))??;
 
         Ok(me)
+    }
+}
+
+impl<R: Resource> fmt::LowerHex for ResourceId<R> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.hash {
+            write!(f, "{:x}", byte)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<R: Resource> fmt::UpperHex for ResourceId<R> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.hash {
+            write!(f, "{:X}", byte)?
+        }
+
+        Ok(())
     }
 }

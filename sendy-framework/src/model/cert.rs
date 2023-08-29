@@ -12,7 +12,7 @@ use super::crypto::PublicKeychain;
 
 /// A peer's certificate that is meant to fully introduce one peer to another, without the
 /// accompanying signature
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UnsignedPeerCertificate {
     /// The public keys used to verify the authenticity of messages sent by this peer and encrypt
     /// messages meant for this peer
@@ -29,6 +29,7 @@ pub struct UnsignedPeerCertificate {
     pub ttl: Duration,
 }
 
+#[derive(Clone, Debug)]
 pub struct PeerCertificate {
     pub(crate) cert: UnsignedPeerCertificate,
     pub(crate) signature: Signature,
@@ -36,7 +37,7 @@ pub struct PeerCertificate {
 
 bitflags! {
     /// A set of all capabilities supported by a peer on the network
-    #[derive(Debug)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct PeerCapabilities: u16 {
         
     }

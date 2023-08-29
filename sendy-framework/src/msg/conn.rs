@@ -13,12 +13,12 @@ impl Message<'_> for Conn {
 }
 
 impl ToBytes for Conn {
-    fn encode<W: crate::ser::ByteWriter>(&self, buf: &mut W) -> Result<(), crate::ser::ToBytesError> {
+    fn encode<W: crate::ser::ByteWriter>(&self, _: &mut W) -> Result<(), crate::ser::ToBytesError> {
         Ok(())
     }
 }
 impl FromBytes<'_> for Conn {
-    fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, crate::FromBytesError> {
+    fn decode(_: &mut untrusted::Reader<'_>) -> Result<Self, crate::FromBytesError> {
         Ok(Conn{})
     }
 }

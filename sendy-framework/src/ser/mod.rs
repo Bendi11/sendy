@@ -12,7 +12,6 @@ use std::{
 };
 
 use bytes::{Buf, BufMut, BytesMut};
-use chrono::{NaiveDateTime, Utc};
 
 mod util;
 mod time;
@@ -25,18 +24,18 @@ pub use util::*;
 pub trait ByteWriter: BufMut + Sized {
     /// Write the byte representation of the given value to `self`, and return the bytes that were
     /// written, used to sign the encoded representation of `val`
-    fn write_partial<'a, T: ToBytes>(&'a mut self, val: &T) -> Cow<'a, [u8]> {
-        let buf = val.encode_to_vec();
+    fn write_partial<'a, T: ToBytes>(&'a mut self, val: &T) -> Result<Cow<'a, [u8]>, ToBytesError> {
+        let buf = val.encode_to_vec()?;
         self.put_slice(&buf);
-        Cow::Owned(buf)
+        Ok(Cow::Owned(buf))
     }
 }
 
 impl ByteWriter for Vec<u8> {
-    fn write_partial<'a, T: ToBytes>(&'a mut self, val: &T) -> Cow<'a, [u8]> {
+    fn write_partial<'a, T: ToBytes>(&'a mut self, val: &T) -> Result<Cow<'a, [u8]>, ToBytesError> {
         let start_idx = self.len();
-        val.encode(self).unwrap();
-        Cow::Borrowed(&self[start_idx..])
+        val.encode(self)?;
+        Ok(Cow::Borrowed(&self[start_idx..]))
     }
 }
 
@@ -56,10 +55,10 @@ pub trait ToBytes: Sized {
     }
 
     /// A helper method to write the representation of [self] to a vec of bytes
-    fn encode_to_vec(&self) -> Vec<u8> {
+    fn encode_to_vec(&self) -> Result<Vec<u8>, ToBytesError> {
         let mut buf = Vec::<u8>::with_capacity(self.size_hint());
-        self.encode(&mut buf);
-        buf
+        self.encode(&mut buf)?;
+        Ok(buf)
     }
 }
 

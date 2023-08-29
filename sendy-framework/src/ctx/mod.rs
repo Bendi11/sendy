@@ -1,12 +1,19 @@
+use std::net::Ipv4Addr;
 use std::{sync::Arc, net::SocketAddr};
+use signature::Signer;
 
+use chrono::{Utc, Duration};
 use sqlx::SqlitePool;
 
-use crate::{SocketConfig, ToBytes, FromBytes};
+use crate::model::cert::{PeerCertificate, UnsignedPeerCertificate, PeerCapabilities};
+use crate::{SocketConfig, ToBytes};
 use crate::model::crypto::PrivateKeychain;
 use crate::sock::ReliableSocket;
 
 mod handle;
+pub mod res;
+
+pub use res::Resource;
 
 /// The main interface for interacting with the Sendy network - contains state for all peer
 /// connections and resource persistence
@@ -16,6 +23,8 @@ pub struct Context {
     socks: ReliableSocket,
     /// Keychain used to sign and encrypt messages
     pub(crate) keychain: PrivateKeychain,
+    /// Signed certificate for our keys
+    pub(crate) certificate: PeerCertificate,
     /// Connection to an sqlite database used to store all resources
     pub(crate) db: SqlitePool,
 }
@@ -28,15 +37,45 @@ impl Context {
         keychain: PrivateKeychain,
         cfg: SocketConfig,
         username: String,
-        db: SqlitePool,
-    ) -> Arc<Self> {
+    ) -> Result<Arc<Self>, sqlx::Error> {
         let socks = ReliableSocket::new(cfg);
+        
+        let db = sqlx::SqlitePool::connect("sqlite://./sendy.db?mode=rwc").await?;
+        sqlx::migrate!("../migrations").run(&db).await?;
 
-        if let Err(e) = sqlx::migrate!("../migrations").run(&db).await {
-            log::error!("Failed to apply database migrations: {}", e);
-        }
+        let certificate = UnsignedPeerCertificate {
+            keychain: keychain.public(),
+            sockaddr: std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
+            username,
+            capabilities: PeerCapabilities::all(),
+            timestamp: Utc::now(),
+            ttl: Duration::seconds(900),
+        };
 
-        Arc::new(Self { socks, keychain, db })
+        let certificate = {
+            let bytes = match certificate.encode_to_vec() {
+                Ok(v) => v,
+                Err(e) => {
+                    panic!("Failed to encode host certificate: {}", e);
+                }
+            };
+            let signature = keychain.authentication.sign(&bytes);
+            PeerCertificate {
+                cert: certificate,
+                signature,
+            }
+        };
+
+        let this = Arc::new(Self { socks, keychain, certificate: certificate.clone(), db });
+
+
+        let id = PeerCertificate::store(&this, certificate).await.unwrap();
+        log::trace!("ID is {:x}", id);
+
+        log::trace!("signature is {:x}", PeerCertificate::fetch(&this, id).await.unwrap().signature);
+
+        Ok(this)
+
     }
 
     /// Listen for incoming connections on the given port

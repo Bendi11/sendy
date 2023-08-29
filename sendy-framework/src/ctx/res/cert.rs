@@ -1,10 +1,8 @@
-use std::pin::Pin;
-
-use async_stream::{stream, try_stream};
+use async_stream::try_stream;
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{Utc, DateTime};
-use futures::{Stream, TryStreamExt, StreamExt, stream::BoxStream};
+use futures::stream::BoxStream;
 use rsa::pkcs1v15::Signature;
 use signature::Verifier;
 use sqlx::{Row, QueryBuilder, Sqlite};
@@ -33,8 +31,8 @@ impl Resource for PeerCertificate {
     type HandleError = PeerCertificateHandleError;
 
     /// Get or generate the ID of the given resource
-    fn id(&self) -> ResourceId<Self> {
-        ResourceId::new(self.cert.keychain.fingerprint())
+    fn id(&self) -> Result<ResourceId<Self>, Self::HandleError> {
+        Ok(ResourceId::new(self.cert.keychain.fingerprint()?))
     }
     
     /// Handle the reception of a new instance of this resource, performing all needed validation
@@ -59,7 +57,7 @@ impl Resource for PeerCertificate {
             true => match cert.timestamp + cert.ttl >= now {
                 true => match cert.keychain.verification.verify(cert_bytes.as_slice_less_safe(), &signature) {
                     Ok(_) => {
-                        let fingerprint = cert.keychain.fingerprint();
+                        let fingerprint = cert.keychain.fingerprint()?;
                         
                         {
                             let fingerprint = fingerprint.as_slice();
@@ -87,14 +85,14 @@ impl Resource for PeerCertificate {
     /// Store a new instance of [Self] into the [Context]'s database, returning a handle to the
     /// inserted resource
     async fn store(ctx: &Context, val: Self) -> Result<ResourceId<Self>, Self::HandleError> {
-        let fingerprint = val.cert.keychain.fingerprint();
+        let fingerprint = val.cert.keychain.fingerprint()?;
         
         {
             let fingerprint = &fingerprint as &[u8];
             let ttl = val.cert.ttl.num_seconds();
-            let data = val.encode_to_vec();
+            let data = val.encode_to_vec()?;
             sqlx::query!(
-                "insert into certificates (userid, creation_timestamp, ttl, data) values (?, ?, ?, ?);",
+                "insert or replace into certificates (userid, creation_timestamp, ttl, data) values (?, ?, ?, ?);",
                 fingerprint,
                 val.cert.timestamp,
                 ttl,
@@ -166,6 +164,8 @@ pub enum PeerCertificateHandleError {
     InvalidTimestamp(chrono::DateTime<Utc>),
     #[error("Certificate TTL has expired")]
     Expired,
+    #[error("Failed to encode a value to bytes: {0}")]
+    Encode(#[from] crate::ser::ToBytesError),
 }
 
 impl PeerCertificateQuery {

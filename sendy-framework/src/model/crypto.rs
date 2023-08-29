@@ -1,7 +1,8 @@
-use digest::{Digest};
 ///! Cryptographic data that facilitates authentication and encryption between peers and across
 ///! channels
 
+
+use digest::Digest;
 
 use rsa::{
     pkcs1v15::{SigningKey, VerifyingKey},
@@ -44,17 +45,25 @@ impl PrivateKeychain {
             decryption,
         }
     }
+    
+    /// Calculate the public keychain that corresponds to this private keychain
+    pub fn public(&self) -> PublicKeychain {
+        PublicKeychain {
+            verification: RsaPrivateKey::from(self.authentication.clone()).to_public_key().into(),
+            encryption: self.decryption.to_public_key()
+        }
+    }
 }
 
 impl PublicKeychain {
     /// Calculate the fingerprint of the public authentication key by applying the sha256 hash
     /// function to it 
-    pub fn fingerprint(&self) -> [u8 ; SHA256_HASH_LEN] {
+    pub fn fingerprint(&self) -> Result<[u8 ; SHA256_HASH_LEN], ToBytesError> {
         let mut hash = Sha256::new();
 
-        hash.update(self.verification.encode_to_vec());
+        hash.update(self.verification.encode_to_vec()?);
 
-        hash.finalize().into()
+        Ok(hash.finalize().into())
     }
 }
 

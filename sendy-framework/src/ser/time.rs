@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc, Duration, NaiveDateTime};
+use chrono::{Utc, Duration, NaiveDateTime};
 
 use crate::{ToBytes, FromBytesError, FromBytes};
 
