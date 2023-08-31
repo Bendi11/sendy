@@ -145,19 +145,23 @@ impl Resource for PeerCertificate {
     async fn fetch_bytes(
         ctx: &Context,
         id: PeerCertificateId,
-    ) -> Result<Vec<u8>, ResourceError> {
-        sqlx::query!(r#"select data from certificates where userid=?"#, id)
+    ) -> Result<Option<Vec<u8>>, ResourceError> {
+        match sqlx::query!(r#"select data from certificates where userid=?"#, id)
             .map(|v| v.data)
             .fetch_one(&ctx.db)
-            .await
-            .map_err(Into::into)
+            .await {
+                Ok(v) => Ok(Some(v)),
+                Err(sqlx::Error::RowNotFound) => Ok(None),
+                Err(e) => Err(e.into()),
+        }
     }
 }
+
 
 impl PeerCertificateQuery {
     /// Append an SQL condition to the given query builder that will filter results to match the
     /// query
-    pub(crate) fn sql<'a, 'b>(
+    pub(self) fn sql<'a, 'b>(
         self,
         query: &'a mut QueryBuilder<'b, Sqlite>,
     ) -> &'a mut QueryBuilder<'b, Sqlite> {

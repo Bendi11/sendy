@@ -8,7 +8,7 @@ use crate::{
     model::cert::PeerCertificate,
     msg::conn::ConnResponseErr,
     sock::{FinishedMessage, PacketKind},
-    Context, FromBytesError,
+    Context,
 };
 
 impl Context {

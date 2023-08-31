@@ -3,9 +3,10 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
-use sendy_wireformat::{ToBytes, FromBytes};
+use rsa::pkcs1v15::Signature;
+use sendy_wireformat::{ToBytes, FromBytes, FromBytesError};
 
-use crate::{model::channel::Channel, Context};
+use crate::{model::{channel::Channel, cert::PeerCertificate}, Context};
 
 use super::{Resource, ResourceKind, ResourceId, ResourceError};
 
@@ -36,6 +37,18 @@ impl Resource for Channel {
     ///
     /// Must return a handle to the inserted resource
     async fn handle(ctx: &Context, bytes: Bytes) -> Result<ResourceId<Self>, ResourceError> {
+        let reader = untrusted::Input::from(&bytes);
+        let (bytes, channel, signature) = reader
+            .read_all(FromBytesError::ExtraBytes, |rdr| {
+                let (bytes, channel) = Channel::partial_decode(rdr)?;
+                let signature = Signature::decode(rdr)?;
+
+                Ok((bytes, channel, signature))
+            })?;
+
+        let cert = PeerCertificate::fetch(ctx, channel.owner)
+            .await?
+            .ok_or_else(|| ResourceError::UnknownCertificate(channel.owner))?;
 
     }
 

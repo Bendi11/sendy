@@ -3,7 +3,7 @@
 
 use std::{fmt, hash::Hash, marker::PhantomData};
 
-use crate::{model::crypto::SHA256_HASH_LEN, Context, FromBytes, FromBytesError, ToBytes};
+use crate::{model::{crypto::SHA256_HASH_LEN, cert::PeerCertificate, channel::Channel}, Context, FromBytes, FromBytesError, ToBytes};
 use async_stream::try_stream;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -14,6 +14,13 @@ use sqlx::{Decode, Encode, Sqlite};
 
 pub mod cert;
 pub mod channel;
+
+/// State required for resources to be persisted in a database
+#[derive(Debug,)]
+pub struct Resources {
+    pub certificate: <PeerCertificate as Resource>::ContextData,
+    pub channel: <Channel as Resource>::ContextData,
+}
 
 /// Tag that can identify the kind of resource that a generic resource ID is referencing
 #[repr(u8)]
@@ -48,6 +55,8 @@ pub enum ResourceError {
     InvalidTimestamp(chrono::DateTime<Utc>),
     #[error("Resource TTL has expired")]
     Expired,
+    #[error("Unknown certificate ID {0:X}")]
+    UnknownCertificate(ResourceId<PeerCertificate>),
 }
 
 /// Resources are any data meant to be persisted on the sendy network, they must be signed by an
@@ -59,6 +68,9 @@ pub trait Resource: ToBytes + for<'a> FromBytes<'a> {
 
     /// Associated type that is used to query other nodes for this resource
     type Query: ToBytes + FromBytes<'static> + Send;
+    
+    /// Type that will be stored in a [Context] used to optimize operations with this resource
+    type ContextData: Debug;
 
     /// Get or generate the ID of the given resource
     fn id(&self) -> Result<ResourceId<Self>, ResourceError>;
@@ -88,7 +100,7 @@ pub trait Resource: ToBytes + for<'a> FromBytes<'a> {
     ) -> BoxStream<'c, Result<ResourceId<Self>, ResourceError>>;
 
     /// Fetch the bytes that can be decoded to an instance of this resource type
-    async fn fetch_bytes(ctx: &Context, id: ResourceId<Self>) -> Result<Vec<u8>, ResourceError>;
+    async fn fetch_bytes(ctx: &Context, id: ResourceId<Self>) -> Result<Option<Vec<u8>>, ResourceError>;
 
     /// Query the database using the given [Query](Self::Query) type, and decode each result to an
     /// instance of [Self]
@@ -110,12 +122,17 @@ pub trait Resource: ToBytes + for<'a> FromBytes<'a> {
     }
 
     /// Fetch and decode an instance of `Self` by the given resource ID
-    async fn fetch(ctx: &Context, id: ResourceId<Self>) -> Result<Self, ResourceError>
+    async fn fetch(ctx: &Context, id: ResourceId<Self>) -> Result<Option<Self>, ResourceError>
     where
         Self: Sync,
     {
         let bytes = Self::fetch_bytes(ctx, id).await?;
-        Self::decode_from_slice(&bytes).map_err(Into::into)
+        match bytes {
+            Some(bytes) => Self::decode_from_slice(&bytes)
+                .map(Some)
+                .map_err(Into::into),
+            None => Ok(None)
+        }
     }
 }
 

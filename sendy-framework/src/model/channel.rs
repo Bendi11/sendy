@@ -14,7 +14,8 @@ pub struct ChannelMembershipSeed {
     pub salt: [u8 ; 32],
 }
 
-/// A channel structure as is is recorded by peers
+/// A channel structure as is is recorded by peers, informing nodes of the existence of a channel
+/// owned by the given peer with the given ID
 #[derive(Debug, FromBytes, ToBytes)]
 pub struct Channel {
     /// Fingerprint of the channel owner, used to verify modifications and invites to the channel

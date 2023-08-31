@@ -1,7 +1,9 @@
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::Future;
+use rsa::pkcs1v15::VerifyingKey;
 use sendy_wireformat::FromBytesError;
+use sha2::Sha256;
 use signature::Signer;
 use std::net::Ipv4Addr;
 use std::{net::SocketAddr, sync::Arc};
@@ -40,6 +42,8 @@ pub struct Context {
     pub(crate) certificate: PeerCertificate,
     /// Connection to a sqlite database used to store all resources
     pub(crate) db: SqlitePool,
+    /// A map of known certificate fingerprints to their associated public authentication keys
+    pub(crate) quick_certs: DashMap<PeerCertificateId, VerifyingKey<Sha256>>,
 }
 
 /// An authenticated connection to a remote peer, storing transmission flow control state for the
@@ -118,7 +122,7 @@ impl Context {
 
         let tx = self.socks.create_transmitter(addr).await?;
 
-        log::trace!("Transmitted certificate");
+        log::trace!("Transmitted certificate to {addr}");
 
         let resp = self
             .socks
