@@ -1,7 +1,7 @@
 //! Traits modelling a generic interface that all resources persisted by the network must conform
 //! to
 
-use std::{fmt, hash::Hash, marker::PhantomData};
+use std::{fmt, hash::Hash, marker::PhantomData, sync::Arc};
 
 use crate::{model::{crypto::SHA256_HASH_LEN, cert::PeerCertificate, channel::Channel}, Context, FromBytes, FromBytesError, ToBytes};
 use async_stream::try_stream;
@@ -12,14 +12,17 @@ use futures::stream::BoxStream;
 use sendy_wireformat::ToBytesError;
 use sqlx::{Decode, Encode, Sqlite};
 
+pub use self::cert::PeerCertificateManager;
+pub use self::channel::ChannelManager;
+
 pub mod cert;
 pub mod channel;
 
 /// State required for resources to be persisted in a database
 #[derive(Debug,)]
 pub struct Resources {
-    pub certificate: <PeerCertificate as Resource>::ContextData,
-    pub channel: <Channel as Resource>::ContextData,
+    pub certificate: PeerCertificateManager,
+    pub channel: ChannelManager,
 }
 
 /// Tag that can identify the kind of resource that a generic resource ID is referencing
@@ -33,7 +36,7 @@ pub enum ResourceKind {
 }
 
 /// A 32-byte ID that uniquely identifies a resource by the hash of its contents
-pub struct ResourceId<R: Resource> {
+pub struct ResourceId<R> {
     hash: [u8; SHA256_HASH_LEN],
     boo: PhantomData<R>,
 }
@@ -59,35 +62,40 @@ pub enum ResourceError {
     UnknownCertificate(ResourceId<PeerCertificate>),
 }
 
+pub trait Resource {
+    type Manager: ResourceManager;
+}
+
 /// Resources are any data meant to be persisted on the sendy network, they must be signed by an
 /// author and identifiable by a unique ID
 #[async_trait]
-pub trait Resource: ToBytes + for<'a> FromBytes<'a> {
+pub trait ResourceManager: Sized {
     /// Tag that can identify the kind of resource this is for generic resource IDs
     const RESOURCE_KIND: ResourceKind;
+    
+    /// The resource type that is managed by `Self`
+    type Resource: ToBytes + for<'a> FromBytes<'a> + Resource;
 
     /// Associated type that is used to query other nodes for this resource
     type Query: ToBytes + FromBytes<'static> + Send;
-    
-    /// Type that will be stored in a [Context] used to optimize operations with this resource
-    type ContextData: Debug;
 
     /// Get or generate the ID of the given resource
-    fn id(&self) -> Result<ResourceId<Self>, ResourceError>;
+    fn id(&self, res: &Self::Resource) -> Result<ResourceId<Self::Resource>, ResourceError>;
 
     /// Handle the reception of a new instance of this resource, performing all needed validation
     /// and potentially inserting a new value into the [Context]'s database.
     ///
     /// Must return a handle to the inserted resource
-    async fn handle(ctx: &Context, bytes: Bytes) -> Result<ResourceId<Self>, ResourceError>;
+    async fn handle(&self, ctx: &Context, bytes: Bytes) -> Result<ResourceId<Self::Resource>, ResourceError>;
 
     /// Store a new instance of [Self] into the [Context]'s database, returning a handle to the
     /// inserted resource
-    async fn store(ctx: &Context, val: Self) -> Result<ResourceId<Self>, ResourceError>;
+    async fn store(&self, ctx: &Context, val: Self::Resource) -> Result<ResourceId<Self::Resource>, ResourceError>;
 
     /// Generate and execute an SQL query that will return records that match the given
     /// [Query](Self::Query)
     fn query_bytes<'c>(
+        &self,
         ctx: &'c Context,
         query: Self::Query,
     ) -> BoxStream<'c, Result<Vec<u8>, ResourceError>>;
@@ -95,40 +103,43 @@ pub trait Resource: ToBytes + for<'a> FromBytes<'a> {
     /// Generate and execute an SQL query that will return the resource IDs of records that match the given
     /// [Query](Self::Query)
     fn query_ids<'c>(
+        &self,
         ctx: &'c Context,
         query: Self::Query,
-    ) -> BoxStream<'c, Result<ResourceId<Self>, ResourceError>>;
+    ) -> BoxStream<'c, Result<ResourceId<Self::Resource>, ResourceError>>;
 
     /// Fetch the bytes that can be decoded to an instance of this resource type
-    async fn fetch_bytes(ctx: &Context, id: ResourceId<Self>) -> Result<Option<Vec<u8>>, ResourceError>;
+    async fn fetch_bytes(&self, ctx: &Context, id: ResourceId<Self::Resource>) -> Result<Option<Vec<u8>>, ResourceError>;
 
     /// Query the database using the given [Query](Self::Query) type, and decode each result to an
     /// instance of [Self]
     fn query<'c>(
+        &self,
         ctx: &'c Context,
         query: Self::Query,
-    ) -> BoxStream<'c, Result<Self, ResourceError>>
+    ) -> BoxStream<'c, Result<Self::Resource, ResourceError>>
     where
         Self: Send + Sync,
-        ResourceError: Send + Sync,
+        Self::Resource: Send + Sync,
     {
         Box::pin(try_stream! {
-            let query = Self::query_bytes(ctx, query);
+            let query = self.query_bytes(ctx, query);
 
             for await instance in query {
-                yield Self::decode_from_slice(&instance?)?;
+                yield Self::Resource::decode_from_slice(&instance?)?;
             }
         })
     }
 
     /// Fetch and decode an instance of `Self` by the given resource ID
-    async fn fetch(ctx: &Context, id: ResourceId<Self>) -> Result<Option<Self>, ResourceError>
+    async fn fetch(&self, ctx: &Context, id: ResourceId<Self::Resource>) -> Result<Option<Self::Resource>, ResourceError>
     where
-        Self: Sync,
+        Self: Send + Sync,
+        Self::Resource: Send + Sync
     {
-        let bytes = Self::fetch_bytes(ctx, id).await?;
+        let bytes = self.fetch_bytes(ctx, id).await?;
         match bytes {
-            Some(bytes) => Self::decode_from_slice(&bytes)
+            Some(bytes) => Self::Resource::decode_from_slice(&bytes)
                 .map(Some)
                 .map_err(Into::into),
             None => Ok(None)
@@ -173,7 +184,7 @@ impl<R: Resource> ToBytes for ResourceId<R> {
         self.hash.size_hint()
     }
 }
-impl<R: Resource> FromBytes<'_> for ResourceId<R> {
+impl<R: 'static> FromBytes<'_> for ResourceId<R> {
     fn decode(reader: &mut untrusted::Reader<'_>) -> Result<Self, FromBytesError> {
         <[u8; 32]>::decode(reader).map(|hash| Self {
             hash,
@@ -196,7 +207,6 @@ impl<R: Resource> Clone for ResourceId<R> {
         }
     }
 }
-
 impl<R: Resource> Copy for ResourceId<R> {}
 
 impl<'s, R: Resource> Encode<'s, Sqlite> for ResourceId<R> {

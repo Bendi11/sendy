@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     ctx::{
-        res::{Resource, ResourceError},
+        res::{ResourceManager, ResourceError},
         Peer, SendyError,
     },
     model::cert::PeerCertificate,

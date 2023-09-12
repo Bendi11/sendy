@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_stream::try_stream;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -12,7 +14,7 @@ use crate::{
     Context, FromBytes, FromBytesError, ToBytes,
 };
 
-use super::{Resource, ResourceId, ResourceKind, ResourceError};
+use super::{ResourceManager, ResourceId, ResourceKind, ResourceError, Resource};
 
 /// A query that may be submitted to lookup a peer's certificate
 #[derive(Debug, Clone, Copy, FromBytes, ToBytes)]
@@ -26,22 +28,33 @@ pub enum PeerCertificateQuery {
 
 pub type PeerCertificateId = ResourceId<PeerCertificate>;
 
-#[async_trait]
+#[derive(Debug,)]
+pub struct PeerCertificateManager {
+
+}
+
 impl Resource for PeerCertificate {
+    type Manager = PeerCertificateManager;
+}
+
+#[async_trait]
+impl ResourceManager for PeerCertificateManager {
     const RESOURCE_KIND: ResourceKind = ResourceKind::Certificate;
 
     type Query = PeerCertificateQuery;
 
+    type Resource = PeerCertificate;
+
     /// Get or generate the ID of the given resource
-    fn id(&self) -> Result<ResourceId<Self>, ResourceError> {
-        Ok(ResourceId::new(self.cert.keychain.fingerprint()?))
+    fn id(&self, res: &Self::Resource) -> Result<ResourceId<Self::Resource>, ResourceError> {
+        Ok(ResourceId::new(res.cert.keychain.fingerprint()?))
     }
 
     /// Handle the reception of a new instance of this resource, performing all needed validation
     /// and potentially inserting a new value into the [Context]'s database.
     ///
     /// Must return a handle to the inserted resource
-    async fn handle(ctx: &Context, bytes: Bytes) -> Result<ResourceId<Self>, ResourceError> {
+    async fn handle(&self, ctx: &Context, bytes: Bytes) -> Result<ResourceId<Self::Resource>, ResourceError> {
         let ((cert_bytes, cert), signature) =
             untrusted::Input::from(&bytes).read_all(FromBytesError::ExtraBytes, |mut rdr| {
                 let (bytes, cert) = UnsignedPeerCertificate::partial_decode(&mut rdr)?;
@@ -87,7 +100,7 @@ impl Resource for PeerCertificate {
 
     /// Store a new instance of [Self] into the [Context]'s database, returning a handle to the
     /// inserted resource
-    async fn store(ctx: &Context, val: Self) -> Result<ResourceId<Self>, ResourceError> {
+    async fn store(&self, ctx: &Context, val: Self::Resource) -> Result<ResourceId<Self::Resource>, ResourceError> {
         let fingerprint = val.cert.keychain.fingerprint()?;
 
         {
@@ -109,6 +122,7 @@ impl Resource for PeerCertificate {
     /// Generate and execute an SQL query that will return records that match the given
     /// [Query](Self::Query)
     fn query_bytes<'c>(
+        &self,
         ctx: &'c Context,
         query: Self::Query,
     ) -> BoxStream<'c, Result<Vec<u8>, ResourceError>> {
@@ -126,6 +140,7 @@ impl Resource for PeerCertificate {
     /// Generate and execute an SQL query that will return the resource IDs of records that match the given
     /// [Query](Self::Query)
     fn query_ids<'c>(
+        &self,
         ctx: &'c Context,
         query: Self::Query,
     ) -> BoxStream<'c, Result<PeerCertificateId, ResourceError>> {
@@ -143,6 +158,7 @@ impl Resource for PeerCertificate {
 
     /// Fetch the bytes that can be decoded to an instance of this resource type
     async fn fetch_bytes(
+        &self,
         ctx: &Context,
         id: PeerCertificateId,
     ) -> Result<Option<Vec<u8>>, ResourceError> {

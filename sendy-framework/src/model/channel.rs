@@ -1,5 +1,6 @@
 //! Channels are categories that post resources are associated with
 
+use chrono::{DateTime, Utc};
 use sendy_wireformat::{FromBytes, ToBytes};
 
 use crate::ctx::res::{ResourceId, cert::PeerCertificateId};
@@ -22,4 +23,7 @@ pub struct Channel {
     pub owner: PeerCertificateId,
     /// Hash of the channel's seed
     pub id: ResourceId<Channel>,
+    /// User-facing name of the channel
+    pub name: String,
+    pub last_update: DateTime<Utc>,
 }

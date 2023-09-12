@@ -22,9 +22,9 @@ use crate::{FromBytes, SocketConfig, ToBytes};
 mod handle;
 pub mod res;
 
-pub use res::Resource;
+pub use res::ResourceManager;
 
-use self::res::ResourceError;
+use self::res::{ResourceError, Resources};
 use self::res::cert::PeerCertificateId;
 
 /// The main interface for interacting with the Sendy network - contains state for all peer
@@ -44,6 +44,8 @@ pub struct Context {
     pub(crate) db: SqlitePool,
     /// A map of known certificate fingerprints to their associated public authentication keys
     pub(crate) quick_certs: DashMap<PeerCertificateId, VerifyingKey<Sha256>>,
+    /// Managers for all resources
+    pub(crate) res: Resources,
 }
 
 /// An authenticated connection to a remote peer, storing transmission flow control state for the
