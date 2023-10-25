@@ -32,7 +32,7 @@ A certificate must contain:
  * Supported [capabilities](#Capabilities) bitmask
 
 ## Capabilities
-A node must advertise in its certificate wether it can provide the following services:
+A node must advertise in its certificate whether it can provide the following services:
  * Relay and store [resources](#Resource)
  * Public IP address and port notification for NAT traversal
 

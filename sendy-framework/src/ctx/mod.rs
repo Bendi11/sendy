@@ -22,9 +22,8 @@ use crate::{FromBytes, SocketConfig, ToBytes};
 mod handle;
 pub mod res;
 
-pub use res::ResourceManager;
 
-use self::res::{ResourceError, Resources};
+use self::res::ResourceError;
 use self::res::cert::PeerCertificateId;
 
 /// The main interface for interacting with the Sendy network - contains state for all peer
@@ -44,8 +43,6 @@ pub struct Context {
     pub(crate) db: SqlitePool,
     /// A map of known certificate fingerprints to their associated public authentication keys
     pub(crate) quick_certs: DashMap<PeerCertificateId, VerifyingKey<Sha256>>,
-    /// Managers for all resources
-    pub(crate) res: Resources,
 }
 
 /// An authenticated connection to a remote peer, storing transmission flow control state for the
@@ -103,9 +100,10 @@ impl Context {
             keychain,
             certificate: certificate.clone(),
             db,
+            quick_certs: DashMap::new(),
         });
 
-        PeerCertificate::store(&this, certificate).await?;
+        this.add_certificate(certificate).await?;
 
         Ok(this)
     }
@@ -132,7 +130,7 @@ impl Context {
             .await?;
 
         let cert = match resp.await {
-            Ok(response) => PeerCertificate::handle(self, response).await?,
+            Ok(response) => self.receive_cert(response).await?,
             Err(reason) => {
                 let err = ConnResponseErr::full_decode_from_slice(&reason)?;
                 log::error!("Failed to connect to remote {addr}: {err}");
@@ -151,7 +149,7 @@ impl Context {
     } 
     
     /// Commit a transaction with another peer, submitting a request and awaiting a response
-    pub async fn transact<T: Transaction>(&self, to: &Peer, req: &T::Request) -> Result<Result<T::OkResponse, T::ErrResponse>, SendyError> {
+    pub(crate) async fn transact<T: Transaction>(&self, to: &Peer, req: &T::Request) -> Result<Result<T::OkResponse, T::ErrResponse>, SendyError> {
         let resp = self.msg(to, req).await?;
 
         Ok(match resp.await {
@@ -165,7 +163,7 @@ impl Context {
     ///
     /// All higher-level [Context] procedures should utilize this method over
     /// [send_wait_response](ReliableSocket::send_wait_response) as it handles dropping connections
-    pub async fn msg<M: Message>(&self, to: &Peer, msg: &M) -> Result<impl Future<Output = Result<Bytes, Bytes>>, SendyError> {
+    pub(crate) async fn msg<M: Message>(&self, to: &Peer, msg: &M) -> Result<impl Future<Output = Result<Bytes, Bytes>>, SendyError> {
         //todo implement connection timeout
         let resp = self.socks.send_wait_response(&to.tx, M::TAG, msg).await?;
         Ok(resp)

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     ctx::{
-        res::{ResourceManager, ResourceError},
+        res::ResourceError,
         Peer, SendyError,
     },
     model::cert::PeerCertificate,
@@ -16,7 +16,7 @@ impl Context {
     async fn handle_message(&self, msg: FinishedMessage) -> Result<(), SendyError> {
         match msg.kind {
             PacketKind::Conn => {
-                let cert = match PeerCertificate::handle(self, msg.payload).await {
+                let cert = match self.receive_cert(msg.payload).await {
                     Ok(cert) => cert,
                     Err(e) => {
                         log::error!(

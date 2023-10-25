@@ -1,15 +1,12 @@
-use async_stream::try_stream;
-use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use futures::stream::BoxStream;
 use rsa::{pkcs1v15::Signature, signature::Verifier};
 use sendy_wireformat::{ToBytes, FromBytes, FromBytesError};
 use sqlx::Executor;
 
 use crate::{model::{channel::Channel, cert::PeerCertificate}, Context};
 
-use super::{ResourceManager, ResourceKind, ResourceId, ResourceError, Resource, cert::PeerCertificateId};
+use super::{ResourceId, ResourceError, cert::PeerCertificateId};
 
 /// A query for channel records
 #[repr(u8)]
@@ -23,36 +20,13 @@ pub enum ChannelQuery {
     Timestamp(DateTime<Utc>) = 2,
 }
 
-#[derive(Debug,)]
-pub struct ChannelManager {
-
-}
 
 pub type ChannelId = ResourceId<Channel>;
 
-impl Resource for Channel {
-    type Manager = ChannelManager;
-}
-
-#[async_trait]
-impl ResourceManager for ChannelManager {
-    const RESOURCE_KIND: ResourceKind = ResourceKind::Channel;
-
-    /// Associated type that is used to query other nodes for this resource
-    type Query = ChannelQuery;
-
-    type Resource = Channel;
-
-    /// Get or generate the ID of the given resource
-    fn id(&self, res: &Self::Resource) -> Result<ResourceId<Self::Resource>, ResourceError> {
-        Ok(res.id)
-    }
-
+impl Context {
     /// Handle the reception of a new instance of this resource, performing all needed validation
     /// and potentially inserting a new value into the [Context]'s database.
-    ///
-    /// Must return a handle to the inserted resource
-    async fn handle(&self, ctx: &Context, bytes: Bytes) -> Result<ResourceId<Self::Resource>, ResourceError> {
+    pub(crate) async fn receive_channel(&self, bytes: Bytes) -> Result<ChannelId, ResourceError> {
         let reader = untrusted::Input::from(&bytes);
         let (bytes, channel, signature) = reader
             .read_all(FromBytesError::ExtraBytes, |rdr| {
@@ -63,7 +37,7 @@ impl ResourceManager for ChannelManager {
             })?;
 
         let record = sqlx::query!("select idx, data from certificates where userid=?", channel.owner)
-            .fetch_one(&ctx.db)
+            .fetch_one(&self.db)
             .await?;
 
         let (idx, signed) = (
@@ -81,7 +55,7 @@ impl ResourceManager for ChannelManager {
         {
             let channelid = channel.id;
             let last_update = channel.last_update;
-            ctx.db.execute(
+            self.db.execute(
                 sqlx::query!(
                     "insert into channels (channelid, last_update, owneridx) values (?, ?, ?)",
                     channelid,
@@ -92,36 +66,5 @@ impl ResourceManager for ChannelManager {
         }
 
         Ok(channel.id)
-    }
-
-    /// Store a new instance of [Self] into the [Context]'s database, returning a handle to the
-    /// inserted resource
-    async fn store(&self, ctx: &Context, val: Self::Resource) -> Result<ResourceId<Self::Resource>, ResourceError> {
-
-    }
-
-    /// Generate and execute an SQL query that will return records that match the given
-    /// [Query](Self::Query)
-    fn query_bytes<'c>(
-        &self,
-        ctx: &'c Context,
-        query: Self::Query,
-    ) -> BoxStream<'c, Result<Vec<u8>, ResourceError>> {
-        
-    }
-
-    /// Generate and execute an SQL query that will return the resource IDs of records that match the given
-    /// [Query](Self::Query)
-    fn query_ids<'c>(
-        &self,
-        ctx: &'c Context,
-        query: Self::Query,
-    ) -> BoxStream<'c, Result<ResourceId<Self::Resource>, ResourceError>> {
-
-    }
-
-    /// Fetch the bytes that can be decoded to an instance of this resource type
-    async fn fetch_bytes(&self, ctx: &Context, id: ResourceId<Self::Resource>) -> Result<Vec<u8>, ResourceError> {
-
     }
 }
