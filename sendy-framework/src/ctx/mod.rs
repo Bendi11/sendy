@@ -113,6 +113,14 @@ impl Context {
     pub async fn listen(&self, port: u16) -> std::io::Result<()> {
         self.socks.new_binding(port).await
     }
+    
+    /// Await new packets on any port that we are currently listening to
+    #[inline]
+    pub async fn recv(&self) -> Result<(), SendyError> {
+        let val = self.socks.recv().await;
+        self.handle_message(val).await?;
+        Ok(())
+    }
 
     /// Connect to the peer at the given IP address and port
     pub async fn connect(&self, addr: SocketAddr) -> Result<(), SendyError> {

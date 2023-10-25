@@ -64,8 +64,11 @@ impl Context {
                                 data,
                             ).execute(&self.db).await?;
                         }
+                        
+                        let fingerprint = ResourceId::new(fingerprint);
+                        self.quick_certs.insert(fingerprint, cert.keychain.verification);
 
-                        Ok(ResourceId::new(fingerprint))
+                        Ok(fingerprint)
                     }
                     Err(e) => Err(ResourceError::InvalidSignature(e)),
                 },
@@ -77,10 +80,10 @@ impl Context {
     
     /// Manually insert a new certificate from the rust-native type, used to add own certificate
     pub(crate) async fn add_certificate(&self, val: PeerCertificate) -> Result<PeerCertificateId, ResourceError> {
-        let fingerprint = val.cert.keychain.fingerprint()?;
+        let fingerprint = ResourceId::<PeerCertificate>::new(val.cert.keychain.fingerprint()?);
 
         {
-            let fingerprint = &fingerprint as &[u8];
+            let fingerprint = &fingerprint.hash as &[u8];
             let ttl = val.cert.ttl.num_seconds();
             let data = val.encode_to_vec()?;
             sqlx::query!(
@@ -92,7 +95,11 @@ impl Context {
             ).execute(&self.db).await?;
         }
 
-        Ok(ResourceId::new(fingerprint))
+        self
+            .quick_certs
+            .insert(fingerprint, val.cert.keychain.verification);
+
+        Ok(fingerprint)
     }
 }
 

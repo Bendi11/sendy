@@ -13,7 +13,6 @@ use hibitset::AtomicBitSet;
 use parking_lot::Mutex;
 use slab::Slab;
 use tokio::sync::{
-    mpsc::{Receiver, Sender},
     oneshot, OwnedSemaphorePermit, RwLock, Semaphore,
 };
 
@@ -97,7 +96,7 @@ impl ReliableSocket {
     /// Handle incoming packets in a loop until a full message can be assembled, after which
     /// packet reception and handling **stops** until the method is called again.
     /// Should be used in a receive loop to constantly receive new messages and dispatch a handler
-    pub async fn recv(self: Arc<Self>) -> FinishedMessage {
+    pub async fn recv(&self) -> FinishedMessage {
         loop {
             if self.socks.is_empty() {
                 tokio::time::sleep(Duration::from_secs(1)).await;
@@ -197,7 +196,7 @@ impl ReliableSocket {
     /// Handle a packet received via UDP, reassembling the buffer, starting new message receptions,
     /// and sending ACKs when needed
     async fn handle_pkt(
-        self: Arc<Self>,
+        &self,
         addr: SocketAddr,
         received_bytes: usize,
         buf: [u8; MAX_SAFE_UDP_PAYLOAD],

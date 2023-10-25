@@ -2,7 +2,7 @@ use crate::{ByteWriter, FromBytes, FromBytesError, ToBytes, ToBytesError};
 use rsa::sha2::Sha256;
 use rsa::{pkcs1v15::Signature, signature::SignatureEncoding};
 use rsa::{
-    pkcs1v15::{SigningKey, VerifyingKey},
+    pkcs1v15::VerifyingKey,
     pkcs8::{der::Decode, DecodePublicKey, EncodePrivateKey, EncodePublicKey, PrivateKeyInfo},
     RsaPrivateKey, RsaPublicKey,
 };

@@ -339,7 +339,8 @@ impl MessageSplitter {
         };
 
         self.blockid += 1;
-        header.encode(&mut self.buf);
+        //PacketHeader.encode is not fallible
+        let _ = header.encode(&mut self.buf);
     }
 }
 

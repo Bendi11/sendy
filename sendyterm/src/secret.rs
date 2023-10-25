@@ -17,8 +17,6 @@ pub use secserv::SecretServiceStore;
 pub use filestore::DerFileStore;
 
 mod filestore {
-    use std::path::Path;
-
     use sendy_framework::rsa::{
         pkcs8::{DecodePrivateKey, EncodePrivateKey},
         RsaPrivateKey,

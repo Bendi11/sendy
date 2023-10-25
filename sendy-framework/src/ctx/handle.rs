@@ -5,7 +5,6 @@ use crate::{
         res::ResourceError,
         Peer, SendyError,
     },
-    model::cert::PeerCertificate,
     msg::conn::ConnResponseErr,
     sock::{FinishedMessage, PacketKind},
     Context,
@@ -13,7 +12,7 @@ use crate::{
 
 impl Context {
     /// Handle a received message from another peer
-    async fn handle_message(&self, msg: FinishedMessage) -> Result<(), SendyError> {
+    pub(crate) async fn handle_message(&self, msg: FinishedMessage) -> Result<(), SendyError> {
         match msg.kind {
             PacketKind::Conn => {
                 let cert = match self.receive_cert(msg.payload).await {

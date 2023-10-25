@@ -1,14 +1,14 @@
 mod secret;
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
-    time::Duration,
+    sync::Arc,
 };
 
 use clap::{Parser, Subcommand};
 
 use sendy_framework::{
     model::crypto::PrivateKeychain,
-    rsa::{self, pkcs1v15::DecryptingKey},
+    rsa,
     Context, SocketConfig,
 };
 
@@ -109,7 +109,7 @@ async fn main() {
         }
         CliCommand::Run {
             username,
-            publicip,
+            publicip: _,
             ports,
         } => {
             let keychain = match keystore.read().await {
@@ -130,6 +130,8 @@ async fn main() {
                 .await
                 .unwrap();
 
+            let ctx = Arc::new(ctx);
+
             for port in ports {
                 if let Err(e) = ctx.listen(port).await {
                     log::error!("Failed to listen on port {port}: {}", e);
@@ -137,7 +139,9 @@ async fn main() {
             }
 
             loop {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                if let Err(e) = ctx.recv().await {
+                    log::error!("Failed to receive packet: {e}");
+                }
             }
         }
     }
